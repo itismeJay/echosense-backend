@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import alerts, logs
+from app.routers import alerts, logs, auth
 from app.database import engine, Base
 
 app = FastAPI(
@@ -17,6 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(alerts.router)
 app.include_router(logs.router)
 
