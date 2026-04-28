@@ -10,21 +10,32 @@ async def seed():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == "admin@echosense.local"))
-        if result.scalar_one_or_none():
-            print("Admin user already exists — skipping.")
-            return
+    users_to_create = [
+        {"email": "admin@echosense.local", "password": "echosense2026", "role": "admin"},
+        {"email": "worker1@echosense.local", "password": "password123", "role": "admin"},
+        {"email": "worker2@echosense.local", "password": "password123", "role": "admin"},
+    ]
 
-        admin = User(
-            email="admin@echosense.local",
-            hashed_password=pwd_context.hash("echosense2026"),
-            role="admin",
-        )
-        db.add(admin)
-        await db.commit()
-        await db.refresh(admin)
-        print(f"Created admin user: {admin.email} (id={admin.id})")
+    async with AsyncSessionLocal() as db:
+        for user_data in users_to_create:
+            result = await db.execute(
+                select(User).where(User.email == user_data["email"])
+            )
+
+            if result.scalar_one_or_none():
+                print(f"{user_data['email']} already exists — skipping.")
+                continue  # 🔑 don't stop everything, just skip this one
+
+            user = User(
+                email=user_data["email"],
+                hashed_password=pwd_context.hash(user_data["password"]),
+                role=user_data["role"],
+            )
+
+            db.add(user)
+            print(f"Creating user: {user.email}")
+
+        await db.commit()  # 🔑 commit once after all inserts
 
 if __name__ == "__main__":
     asyncio.run(seed())
