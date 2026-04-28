@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/pip install *)",
+      "Bash(venv/Scripts/python *)",
+      "Bash(venv/Scripts/pip show *)",
+      "Bash(powershell -Command '& { $pyd = '\\\\''venv\\\\Lib\\\\site-packages\\\\greenlet\\\\_greenlet.cp314-win_amd64.pyd'\\\\''; [System.Reflection.Assembly]::LoadFile\\($pyd\\) }')",
+      "Bash(cp \"C:/Users/rbjay/AppData/Local/Programs/Python/Python314/python314.dll\" venv/Scripts/)",
+      "Bash(cp \"C:/Users/rbjay/AppData/Local/Programs/Python/Python314/python3.dll\" venv/Scripts/)",
+      "Bash(powershell *)",
+      "Bash(cp \"C:/Users/rbjay/AppData/Local/Programs/Python/Python314/vcruntime140.dll\" venv/Scripts/)",
+      "Bash(cp \"C:/Users/rbjay/AppData/Local/Programs/Python/Python314/vcruntime140_1.dll\" venv/Scripts/)",
+      "Bash(C:/Users/rbjay/AppData/Local/Programs/Python/Python314/python.exe -c ' *)",
+      "Bash(venv/Scripts/pip freeze *)",
+      "Bash(venv/Scripts/uvicorn app.main:app --host 0.0.0.0 --port 8000)",
+      "Bash(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@echosense.local\",\"password\":\"echosense2026\"}')",
+      "Bash(curl *)",
+      "Bash(pkill -f \"uvicorn app.main\")",
+      "Bash(venv/Scripts/uvicorn app.main:app --port 8000)",
+      "Bash(venv/Scripts/uvicorn app.main:app --port 8001)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ]
+  }
+}
