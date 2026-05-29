@@ -9,12 +9,11 @@ from typing import List
 router = APIRouter(prefix="/logs", tags=["Logs"])
 
 @router.get("/", response_model=List[AlertResponse])
-async def get_logs(db: AsyncSession = Depends(get_db)):
+async def get_logs(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Alert).order_by(Alert.created_at.desc()).limit(100)
+        select(Alert).order_by(Alert.created_at.desc()).offset(skip).limit(limit)
     )
-    logs = result.scalars().all()
-    return logs
+    return result.scalars().all()
 
 @router.get("/stats")
 async def get_stats(db: AsyncSession = Depends(get_db)):

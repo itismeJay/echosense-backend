@@ -5,7 +5,7 @@ from app.database import get_db
 from app.models.alert import Alert
 from app.schemas.alert import AlertCreate, AlertResponse
 from app.notifications.push import notify_subscribers
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
@@ -28,10 +28,12 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
     return new_alert
 
 @router.get("/", response_model=List[AlertResponse])
-async def get_alerts(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Alert).order_by(Alert.created_at.desc()))
-    alerts = result.scalars().all()
-    return alerts
+async def get_alerts(severity: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    query = select(Alert).order_by(Alert.created_at.desc())
+    if severity:
+        query = query.where(Alert.severity == severity)
+    result = await db.execute(query)
+    return result.scalars().all()
 
 @router.get("/{alert_id}", response_model=AlertResponse)
 async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
