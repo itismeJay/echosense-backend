@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -12,3 +12,15 @@ class Alert(Base):
     location = Column(String, default="Classroom")
     status = Column(String, default="active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Rich evidence from the edge device (all nullable for backward compat)
+    transcribed_text = Column(String, nullable=True)
+    detected_words = Column(Text, nullable=True)          # JSON-encoded list[str]
+    yamnet_class = Column(String, nullable=True)
+    yamnet_score = Column(Float, nullable=True)
+    emotion = Column(String, nullable=True)
+    rms = Column(Float, nullable=True)
+    energy_variance = Column(Float, nullable=True)
+    zero_crossing_rate = Column(Float, nullable=True)
+    peak_to_average = Column(Float, nullable=True)
+    waveform_snapshot = Column(Text, nullable=True)       # JSON-encoded list[int]
