@@ -20,7 +20,8 @@
       "Bash(venv/Scripts/uvicorn app.main:app --port 8001)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(/usr/bin/python3 /tmp/edge_final_e2e.py)"
     ]
   }
 }
