@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
-import uuid
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import UserOut
@@ -22,7 +21,7 @@ async def get_users(
 
 @router.delete("/{user_id}", status_code=204)
 async def delete_user(
-    user_id: uuid.UUID,
+    user_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
