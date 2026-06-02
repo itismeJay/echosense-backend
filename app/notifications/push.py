@@ -1,17 +1,28 @@
 import httpx
-from datetime import datetime
+import logging
 
-async def send_push_notification(alert_data: dict):
-    message = {
-        "title": f"[ALERT] EchoSense Alert - {alert_data['severity'].upper()}",
-        "body": f"Aggression detected! Confidence: {alert_data['confidence']*100:.0f}% at {alert_data['location']}",
-        "severity": alert_data['severity'],
-        "timestamp": datetime.utcnow().isoformat()
-    }
-    return message
+logger = logging.getLogger(__name__)
 
-async def notify_subscribers(alert_data: dict):
-    notification = await send_push_notification(alert_data)
-    print(f"[PUSH NOTIFICATION] {notification['title']}")
-    print(f"[PUSH NOTIFICATION] {notification['body']}")
-    return notification
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+
+async def send_expo_pushes(tokens: list, alert_id: int, severity: str, location: str):
+    if not tokens:
+        return
+    messages = [
+        {
+            "to": token,
+            "title": "🚨 EchoSense Alert",
+            "body": f"{severity.upper()} aggression detected in {location}",
+            "sound": "default",
+            "data": {"alertId": alert_id, "severity": severity},
+        }
+        for token in tokens
+    ]
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(EXPO_PUSH_URL, json=messages, timeout=10)
+            resp.raise_for_status()
+            logger.info("Expo push sent to %d token(s)", len(tokens))
+    except Exception as exc:
+        logger.warning("Expo push failed: %s", exc)

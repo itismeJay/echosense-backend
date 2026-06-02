@@ -7,6 +7,10 @@ from app.database import engine, Base
 # create_all() only creates missing tables — it never adds columns to an
 # existing one. Since there is no Alembic, we apply additive column changes
 # idempotently here so existing deployments pick up the new alert fields.
+USER_COLUMN_MIGRATIONS = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT",
+]
+
 ALERT_COLUMN_MIGRATIONS = [
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS transcribed_text TEXT",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS detected_words TEXT",
@@ -43,7 +47,7 @@ app.include_router(logs.router)
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for statement in ALERT_COLUMN_MIGRATIONS:
+        for statement in USER_COLUMN_MIGRATIONS + ALERT_COLUMN_MIGRATIONS:
             await conn.execute(text(statement))
 
 @app.get("/")

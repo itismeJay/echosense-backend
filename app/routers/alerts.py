@@ -1,11 +1,13 @@
+import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.models.alert import Alert
+from app.models.user import User
 from app.schemas.alert import AlertCreate, AlertResponse
-from app.notifications.push import notify_subscribers
+from app.notifications.push import send_expo_pushes
 from typing import List, Optional
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
@@ -40,11 +42,11 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
     db.add(new_alert)
     await db.commit()
     await db.refresh(new_alert)
-    await notify_subscribers({
-        "severity": new_alert.severity,
-        "confidence": new_alert.confidence,
-        "location": new_alert.location
-    })
+
+    token_result = await db.execute(select(User).where(User.push_token.isnot(None)))
+    tokens = [u.push_token for u in token_result.scalars().all()]
+    asyncio.create_task(send_expo_pushes(tokens, new_alert.id, new_alert.severity, new_alert.location))
+
     return hydrate_alert(new_alert)
 
 @router.get("/", response_model=List[AlertResponse])

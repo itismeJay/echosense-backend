@@ -4,10 +4,21 @@ from sqlalchemy import select
 from typing import List
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import UserOut
-from app.routers.auth import require_admin
+from app.schemas.user import UserOut, PushTokenRequest
+from app.routers.auth import require_admin, get_current_user
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@router.post("/push-token")
+async def save_push_token(
+    body: PushTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.push_token = body.token
+    await db.commit()
+    return {"message": "Push token saved"}
 
 
 @router.get("/", response_model=List[UserOut])
