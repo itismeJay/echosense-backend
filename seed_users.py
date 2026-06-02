@@ -14,6 +14,8 @@ async def seed():
         {"email": "admin@echosense.local", "password": "echosense2026", "role": "admin"},
         {"email": "worker1@echosense.local", "password": "password123", "role": "admin"},
         {"email": "worker2@echosense.local", "password": "password123", "role": "admin"},
+        {"email": "staff@echosense.local", "password": "staff2026", "role": "staff"},
+        {"email": "counselor@echosense.local", "password": "counselor2026", "role": "counselor"},
     ]
 
     async with AsyncSessionLocal() as db:

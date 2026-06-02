@@ -16,7 +16,7 @@ class UserOut(BaseModel):
 class RegisterRequest(BaseModel):
     email: str
     password: str
-    role: Literal["admin", "user"] = "user"
+    role: Literal["admin", "staff", "counselor"] = "staff"
 
 class TokenResponse(BaseModel):
     access_token: str
