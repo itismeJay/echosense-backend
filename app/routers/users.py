@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.user import UserOut, PushTokenRequest
 from app.routers.auth import require_admin, get_current_user
+from app.routers.audit_logs import log_action
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -42,5 +43,6 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    await log_action(db, current_user, "Deleted User", "Users", user.email)
     await db.delete(user)
     await db.commit()
