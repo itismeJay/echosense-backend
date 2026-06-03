@@ -4,8 +4,8 @@ from sqlalchemy import select
 from typing import List
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import UserOut, PushTokenRequest
-from app.routers.auth import require_admin, get_current_user
+from app.schemas.user import UserOut, PushTokenRequest, RegisterRequest
+from app.routers.auth import require_admin, get_current_user, pwd_context
 from app.routers.audit_logs import log_action
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -20,6 +20,28 @@ async def save_push_token(
     current_user.push_token = body.token
     await db.commit()
     return {"message": "Push token saved"}
+
+
+@router.post("/", response_model=UserOut, status_code=201)
+async def create_user(
+    body: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    result = await db.execute(select(User).where(User.email == body.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    user = User(
+        email=body.email,
+        hashed_password=pwd_context.hash(body.password),
+        role=body.role,
+    )
+    db.add(user)
+    await db.flush()
+    await log_action(db, current_user, "Created User", "Users", body.email)
+    await db.commit()
+    await db.refresh(user)
+    return UserOut(id=str(user.id), email=user.email, role=user.role)
 
 
 @router.get("/", response_model=List[UserOut])
