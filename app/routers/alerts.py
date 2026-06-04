@@ -2,11 +2,11 @@ import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.database import get_db
 from app.models.alert import Alert
 from app.models.user import User
-from app.schemas.alert import AlertCreate, AlertResponse
+from app.schemas.alert import AlertCreate, AlertResponse, AlertAnalyticsResponse
 from app.notifications.push import send_expo_pushes
 from typing import List, Optional
 
@@ -14,10 +14,12 @@ router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
 
 def hydrate_alert(alert: Alert) -> Alert:
-    """Decode the JSON-string columns back into Python lists so the response
-    model validates. Mutates the (already-loaded) ORM instance in place."""
+    """Decode JSON-string columns back into Python lists for the response model."""
     alert.detected_words = json.loads(alert.detected_words or "[]")
     alert.waveform_snapshot = json.loads(alert.waveform_snapshot or "[]")
+    alert.categories = json.loads(alert.categories or "[]")
+    alert.hard_hits = json.loads(alert.hard_hits or "[]")
+    alert.soft_hits = json.loads(alert.soft_hits or "[]")
     return alert
 
 
@@ -38,6 +40,10 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
         zero_crossing_rate=alert.zero_crossing_rate,
         peak_to_average=alert.peak_to_average,
         waveform_snapshot=json.dumps(alert.waveform_snapshot or []),
+        categories=json.dumps(alert.categories or []),
+        language=alert.language,
+        hard_hits=json.dumps(alert.hard_hits or []),
+        soft_hits=json.dumps(alert.soft_hits or []),
     )
     db.add(new_alert)
     await db.commit()
@@ -49,13 +55,57 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
 
     return hydrate_alert(new_alert)
 
+
+@router.get("/analytics/categories", response_model=AlertAnalyticsResponse)
+async def get_category_analytics(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Alert))
+    alerts = result.scalars().all()
+
+    by_category: dict = {}
+    by_language: dict = {}
+    by_severity: dict = {}
+
+    for alert in alerts:
+        by_severity[alert.severity] = by_severity.get(alert.severity, 0) + 1
+
+        if alert.language:
+            by_language[alert.language] = by_language.get(alert.language, 0) + 1
+
+        try:
+            cats = json.loads(alert.categories or "[]")
+        except (json.JSONDecodeError, TypeError):
+            cats = []
+        for cat in cats:
+            by_category[cat] = by_category.get(cat, 0) + 1
+
+    return AlertAnalyticsResponse(
+        total_alerts=len(alerts),
+        by_category=by_category,
+        by_language=by_language,
+        by_severity=by_severity,
+    )
+
+
 @router.get("/", response_model=List[AlertResponse])
-async def get_alerts(severity: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_alerts(
+    severity: Optional[str] = None,
+    category: Optional[str] = None,
+    language: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     query = select(Alert).order_by(Alert.created_at.desc())
     if severity:
         query = query.where(Alert.severity == severity)
+    if language:
+        query = query.where(Alert.language == language)
+    if category:
+        # Use PostgreSQL JSONB containment to filter alerts that include the category
+        query = query.where(
+            text("categories::jsonb @> :cat").bindparams(cat=json.dumps([category]))
+        )
     result = await db.execute(query)
     return [hydrate_alert(a) for a in result.scalars().all()]
+
 
 @router.get("/{alert_id}", response_model=AlertResponse)
 async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):

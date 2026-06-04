@@ -24,3 +24,9 @@ class Alert(Base):
     zero_crossing_rate = Column(Float, nullable=True)
     peak_to_average = Column(Float, nullable=True)
     waveform_snapshot = Column(Text, nullable=True)       # JSON-encoded list[int]
+
+    # v2 fields from upgraded Pi payload
+    categories = Column(Text, nullable=True)              # JSON-encoded list[str]
+    language = Column(String, nullable=True)              # e.g. "tl", "ceb", "en"
+    hard_hits = Column(Text, nullable=True)               # JSON-encoded list[str]
+    soft_hits = Column(Text, nullable=True)               # JSON-encoded list[str]

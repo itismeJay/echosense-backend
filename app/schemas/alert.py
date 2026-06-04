@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 
 class AlertCreate(BaseModel):
     severity: str
@@ -17,6 +17,11 @@ class AlertCreate(BaseModel):
     zero_crossing_rate: Optional[float] = None
     peak_to_average: Optional[float] = None
     waveform_snapshot: Optional[List[int]] = None
+    # v2 fields
+    categories: Optional[List[str]] = None
+    language: Optional[str] = None
+    hard_hits: Optional[List[str]] = None
+    soft_hits: Optional[List[str]] = None
 
 class AlertResponse(BaseModel):
     id: int
@@ -36,9 +41,20 @@ class AlertResponse(BaseModel):
     zero_crossing_rate: Optional[float] = None
     peak_to_average: Optional[float] = None
     waveform_snapshot: Optional[List[int]] = None
+    # v2 fields
+    categories: Optional[List[str]] = None
+    language: Optional[str] = None
+    hard_hits: Optional[List[str]] = None
+    soft_hits: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
 
 class AlertUpdate(BaseModel):
     status: Optional[str] = None
+
+class AlertAnalyticsResponse(BaseModel):
+    total_alerts: int
+    by_category: Dict[str, int]
+    by_language: Dict[str, int]
+    by_severity: Dict[str, int]

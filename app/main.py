@@ -29,6 +29,11 @@ ALERT_COLUMN_MIGRATIONS = [
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS zero_crossing_rate DOUBLE PRECISION",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS peak_to_average DOUBLE PRECISION",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS waveform_snapshot TEXT",
+    # v2 Pi payload fields
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS categories TEXT",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS language VARCHAR",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS hard_hits TEXT",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS soft_hits TEXT",
 ]
 
 # Seed the slur dictionary with default terms (idempotent via ON CONFLICT).
