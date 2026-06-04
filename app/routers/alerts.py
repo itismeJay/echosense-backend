@@ -2,7 +2,7 @@ import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select
 from app.database import get_db
 from app.models.alert import Alert
 from app.models.user import User
@@ -99,10 +99,8 @@ async def get_alerts(
     if language:
         query = query.where(Alert.language == language)
     if category:
-        # Use PostgreSQL JSONB containment to filter alerts that include the category
-        query = query.where(
-            text("categories::jsonb @> :cat").bindparams(cat=json.dumps([category]))
-        )
+        # Match the quoted category string inside the JSON array text
+        query = query.where(Alert.categories.like(f'%"{category}"%'))
     result = await db.execute(query)
     return [hydrate_alert(a) for a in result.scalars().all()]
 
