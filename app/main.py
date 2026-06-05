@@ -34,6 +34,17 @@ ALERT_COLUMN_MIGRATIONS = [
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS language VARCHAR",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS hard_hits TEXT",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS soft_hits TEXT",
+    # v3 Pi payload fields
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS duration_gate VARCHAR(20)",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS required_duration DOUBLE PRECISION",
+]
+
+SYSTEM_SETTINGS_COLUMN_MIGRATIONS = [
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS device_status VARCHAR(20) DEFAULT 'offline'",
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP",
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS vosk_version VARCHAR(50) DEFAULT 'vosk-model-small-en-us-0.15'",
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS yamnet_version VARCHAR(50) DEFAULT 'YAMNet TFLite v1.0'",
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS last_ota_update TIMESTAMP",
 ]
 
 # Seed the slur dictionary with default terms (idempotent via ON CONFLICT).
@@ -95,7 +106,7 @@ app.include_router(reports.router)
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for statement in USER_COLUMN_MIGRATIONS + ALERT_COLUMN_MIGRATIONS:
+        for statement in USER_COLUMN_MIGRATIONS + ALERT_COLUMN_MIGRATIONS + SYSTEM_SETTINGS_COLUMN_MIGRATIONS:
             await conn.execute(text(statement))
         await conn.execute(text(SLUR_SEED))
         await conn.execute(text(SYSTEM_SETTINGS_SEED))

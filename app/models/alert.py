@@ -27,6 +27,8 @@ class Alert(Base):
 
     # v2 fields from upgraded Pi payload
     categories = Column(Text, nullable=True)              # JSON-encoded list[str]
-    language = Column(String, nullable=True)              # e.g. "tl", "ceb", "en"
+    language = Column(String(10), nullable=True)          # e.g. "tl", "ceb", "en"
     hard_hits = Column(Text, nullable=True)               # JSON-encoded list[str]
     soft_hits = Column(Text, nullable=True)               # JSON-encoded list[str]
+    duration_gate = Column(String(20), nullable=True)     # e.g. "threat", "hard", "repeated"
+    required_duration = Column(Float, nullable=True)

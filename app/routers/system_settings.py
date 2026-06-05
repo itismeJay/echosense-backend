@@ -49,13 +49,25 @@ async def update_settings(
 
 
 @router.post("/heartbeat")
-async def heartbeat(db: AsyncSession = Depends(get_db)):
+async def post_heartbeat(db: AsyncSession = Depends(get_db)):
+    now = datetime.now(timezone.utc)
     row = await _get_row(db)
     if row:
         row.device_status = "online"
-        row.last_heartbeat = datetime.now(timezone.utc)
+        row.last_heartbeat = now
         await db.commit()
-    return {"message": "Heartbeat received"}
+    return {"status": "ok", "timestamp": now.isoformat()}
+
+
+@router.get("/heartbeat")
+async def get_heartbeat(db: AsyncSession = Depends(get_db)):
+    row = await _get_row(db)
+    if not row:
+        return {"device_status": "unknown", "last_heartbeat": None}
+    return {
+        "device_status": row.device_status,
+        "last_heartbeat": row.last_heartbeat.isoformat() if row.last_heartbeat else None,
+    }
 
 
 @router.post("/ota-push")

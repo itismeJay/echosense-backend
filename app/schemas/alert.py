@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Any, Dict, Optional, List
 
+
 class AlertCreate(BaseModel):
     severity: str
     confidence: float
@@ -22,6 +23,9 @@ class AlertCreate(BaseModel):
     language: Optional[str] = None
     hard_hits: Optional[List[str]] = None
     soft_hits: Optional[List[str]] = None
+    duration_gate: Optional[str] = None
+    required_duration: Optional[float] = None
+
 
 class AlertResponse(BaseModel):
     id: int
@@ -46,15 +50,41 @@ class AlertResponse(BaseModel):
     language: Optional[str] = None
     hard_hits: Optional[List[str]] = None
     soft_hits: Optional[List[str]] = None
+    duration_gate: Optional[str] = None
+    required_duration: Optional[float] = None
 
     class Config:
         from_attributes = True
 
+
 class AlertUpdate(BaseModel):
     status: Optional[str] = None
+
+
+class TopWord(BaseModel):
+    word: str
+    count: int
+
 
 class AlertAnalyticsResponse(BaseModel):
     total_alerts: int
     by_category: Dict[str, int]
     by_language: Dict[str, int]
     by_severity: Dict[str, int]
+    by_duration_gate: Dict[str, int]
+    top_detected_words: List[TopWord]
+
+
+class PeriodStats(BaseModel):
+    total: int
+    high: int
+    medium: int
+    low: int
+    most_common_category: Optional[str] = None
+    most_common_language: Optional[str] = None
+
+
+class AlertSummaryResponse(BaseModel):
+    today: PeriodStats
+    this_week: PeriodStats
+    all_time: PeriodStats
