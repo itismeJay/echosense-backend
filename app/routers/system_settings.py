@@ -41,7 +41,7 @@ async def update_settings(
         row.confidence_threshold = body.confidence_threshold
     if body.aggression_duration_threshold is not None:
         row.aggression_duration_threshold = body.aggression_duration_threshold
-    row.updated_at = datetime.now(timezone.utc)
+    row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await log_action(db, current_user, "Updated System Settings", "System Settings")
     await db.commit()
     await db.refresh(row)
@@ -54,7 +54,7 @@ async def post_heartbeat(db: AsyncSession = Depends(get_db)):
     row = await _get_row(db)
     if row:
         row.device_status = "online"
-        row.last_heartbeat = now
+        row.last_heartbeat = now.replace(tzinfo=None)  # TIMESTAMP col requires naive datetime
         await db.commit()
     return {"status": "ok", "timestamp": now.isoformat()}
 
