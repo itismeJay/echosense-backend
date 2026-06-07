@@ -21,7 +21,15 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git push *)",
-      "Bash(/usr/bin/python3 /tmp/edge_final_e2e.py)"
+      "Bash(/usr/bin/python3 /tmp/edge_final_e2e.py)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pip3 show *)",
+      "Bash(pip show *)",
+      "Bash(pip3 install *)",
+      "Bash(/tmp/pgvenv/bin/pip install *)",
+      "Bash(/tmp/pgvenv/bin/python3 -c ' *)",
+      "Read(//Users/jay/**)"
     ]
   }
 }
