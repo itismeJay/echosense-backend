@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
 from app.routers import dictionary, system_settings, audit_logs, reports
+from app.routers import system_logs
 from app.database import engine, Base
 
 # Imported so Base.metadata.create_all picks them up at startup
@@ -101,6 +102,7 @@ app.include_router(dictionary.router)
 app.include_router(system_settings.router)
 app.include_router(audit_logs.router)
 app.include_router(reports.router)
+app.include_router(system_logs.router)
 
 @app.on_event("startup")
 async def startup():
