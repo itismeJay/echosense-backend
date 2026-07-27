@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -7,7 +7,12 @@ from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.schemas.system_settings import SystemSettingsOut, SystemSettingsUpdate
 from app.routers.auth import require_admin
-from app.routers.audit_logs import log_action
+from app.services.audit import (
+    AuditAction,
+    AuditResource,
+    AuditStatus,
+    record_audit_event,
+)
 
 router = APIRouter(prefix="/system-settings", tags=["System Settings"])
 
@@ -30,6 +35,7 @@ async def get_settings(
 
 @router.put("/", response_model=SystemSettingsOut)
 async def update_settings(
+    request: Request,
     body: SystemSettingsUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
@@ -37,12 +43,44 @@ async def update_settings(
     row = await _get_row(db)
     if not row:
         raise HTTPException(status_code=404, detail="Settings not found")
-    if body.confidence_threshold is not None:
+
+    previous_values = {}
+    new_values = {}
+    if (
+        body.confidence_threshold is not None
+        and body.confidence_threshold != row.confidence_threshold
+    ):
+        previous_values["confidence_threshold"] = row.confidence_threshold
+        new_values["confidence_threshold"] = body.confidence_threshold
         row.confidence_threshold = body.confidence_threshold
-    if body.aggression_duration_threshold is not None:
+    if (
+        body.aggression_duration_threshold is not None
+        and body.aggression_duration_threshold != row.aggression_duration_threshold
+    ):
+        previous_values["aggression_duration_threshold"] = row.aggression_duration_threshold
+        new_values["aggression_duration_threshold"] = body.aggression_duration_threshold
         row.aggression_duration_threshold = body.aggression_duration_threshold
+
+    if not new_values:
+        return row
+
     row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    await log_action(db, current_user, "Updated System Settings", "System Settings")
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.UPDATE_SETTINGS,
+        AuditResource.SETTINGS,
+        AuditStatus.SUCCESS,
+        actor=current_user,
+        resource_id=row.setting_id,
+        target="Global detection settings",
+        description="Administrator updated detection settings.",
+        metadata={
+            "changed_fields": sorted(new_values),
+            "previous_values": previous_values,
+            "new_values": new_values,
+        },
+    )
     await db.commit()
     await db.refresh(row)
     return row
@@ -72,12 +110,23 @@ async def get_heartbeat(db: AsyncSession = Depends(get_db)):
 
 @router.post("/ota-push")
 async def ota_push(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
     row = await _get_row(db)
     if row:
-        row.last_ota_update = datetime.now(timezone.utc)
-        await log_action(db, current_user, "OTA Push Triggered", "System Settings")
+        row.last_ota_update = datetime.now(timezone.utc).replace(tzinfo=None)
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.TRIGGER_OTA_PUSH,
+            AuditResource.SETTINGS,
+            AuditStatus.SUCCESS,
+            actor=current_user,
+            resource_id=row.setting_id,
+            target="OTA update request",
+            description="Administrator recorded an OTA push request.",
+        )
         await db.commit()
     return {"message": "OTA push triggered"}

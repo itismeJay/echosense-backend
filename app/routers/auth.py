@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import jwt, JWTError
@@ -9,6 +9,12 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import LoginRequest, RegisterRequest, TokenResponse, UserOut
+from app.services.audit import (
+    AuditAction,
+    AuditResource,
+    AuditStatus,
+    record_audit_event,
+)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -48,22 +54,63 @@ async def get_current_user(
     return user
 
 
-async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+async def require_admin(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
     if current_user.role != "admin":
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.PERMISSION_DENIED,
+            AuditResource.SECURITY,
+            AuditStatus.FAILURE,
+            actor=current_user,
+            target=request.url.path,
+            description="User was denied access to an administrative operation.",
+            metadata={"method": request.method},
+        )
+        await db.commit()
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: Request,
+    body: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
     if not user or not pwd_context.verify(body.password, user.hashed_password):
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.LOGIN_FAILED,
+            AuditResource.AUTHENTICATION,
+            AuditStatus.FAILURE,
+            actor_email=body.email,
+            description="Login attempt failed.",
+        )
+        await db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    access_token = create_token(user)
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.LOGIN,
+        AuditResource.AUTHENTICATION,
+        AuditStatus.SUCCESS,
+        actor=user,
+        description="User signed in successfully.",
+    )
+    await db.commit()
     return TokenResponse(
-        access_token=create_token(user),
+        access_token=access_token,
         user=UserOut(id=str(user.id), email=user.email, role=user.role),
     )
 
@@ -75,9 +122,10 @@ async def me(current_user: User = Depends(get_current_user)):
 
 @router.post("/register", response_model=UserOut, status_code=201)
 async def register(
+    request: Request,
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
@@ -89,6 +137,19 @@ async def register(
         role=body.role,
     )
     db.add(user)
+    await db.flush()
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.CREATE_USER,
+        AuditResource.USER,
+        AuditStatus.SUCCESS,
+        actor=current_user,
+        resource_id=user.id,
+        target=user.email,
+        description="Administrator created a user account.",
+        metadata={"role": user.role},
+    )
     await db.commit()
     await db.refresh(user)
     return UserOut(id=str(user.id), email=user.email, role=user.role)

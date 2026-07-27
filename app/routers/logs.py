@@ -14,6 +14,7 @@ router = APIRouter(prefix="/logs", tags=["Logs"])
 # Emotion buckets we always report, even when count is zero.
 EMOTION_BUCKETS = ["angry", "aggressive", "distressed", "upset", "neutral", "unknown"]
 
+
 @router.get("/", response_model=List[AlertResponse])
 async def get_logs(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -21,18 +22,13 @@ async def get_logs(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(g
     )
     return [hydrate_alert(a) for a in result.scalars().all()]
 
+
 @router.get("/stats")
 async def get_stats(db: AsyncSession = Depends(get_db)):
     total = await db.execute(select(func.count(Alert.id)))
-    high = await db.execute(
-        select(func.count(Alert.id)).where(Alert.severity == "high")
-    )
-    medium = await db.execute(
-        select(func.count(Alert.id)).where(Alert.severity == "medium")
-    )
-    low = await db.execute(
-        select(func.count(Alert.id)).where(Alert.severity == "low")
-    )
+    high = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "high"))
+    medium = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "medium"))
+    low = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "low"))
 
     # Emotion breakdown — group counts, mapping NULL/unrecognized into "unknown".
     emotion_breakdown = {bucket: 0 for bucket in EMOTION_BUCKETS}

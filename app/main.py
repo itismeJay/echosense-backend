@@ -1,20 +1,23 @@
-from fastapi import FastAPI
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
 from app.routers import dictionary, system_settings, audit_logs, reports
 from app.routers import system_logs
+from app.config import settings
 from app.database import engine, Base
 
 # Imported so Base.metadata.create_all picks them up at startup
-import app.models.slur            # noqa: F401
+import app.models.slur  # noqa: F401
 import app.models.system_settings  # noqa: F401
-import app.models.audit_log        # noqa: F401
-import app.models.report           # noqa: F401
+import app.models.audit_log  # noqa: F401
+import app.models.report  # noqa: F401
 
-# create_all() only creates missing tables — it never adds columns to an
-# existing one. Since there is no Alembic, we apply additive column changes
-# idempotently here so existing deployments pick up the new alert fields.
+# Legacy startup maintenance is retained temporarily for the older non-Alembic
+# tables. Deployments using the Alembic schema should disable it with
+# RUN_LEGACY_STARTUP_MAINTENANCE=false.
 USER_COLUMN_MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT",
 ]
@@ -83,7 +86,7 @@ WHERE NOT EXISTS (SELECT 1 FROM system_settings)
 app = FastAPI(
     title="EchoSense API",
     description="Real-Time Acoustic Aggression Detection System",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 app.add_middleware(
@@ -93,6 +96,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -104,18 +117,25 @@ app.include_router(audit_logs.router)
 app.include_router(reports.router)
 app.include_router(system_logs.router)
 
+
 @app.on_event("startup")
 async def startup():
+    if not settings.RUN_LEGACY_STARTUP_MAINTENANCE:
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for statement in USER_COLUMN_MIGRATIONS + ALERT_COLUMN_MIGRATIONS + SYSTEM_SETTINGS_COLUMN_MIGRATIONS:
+        for statement in (
+            USER_COLUMN_MIGRATIONS + ALERT_COLUMN_MIGRATIONS + SYSTEM_SETTINGS_COLUMN_MIGRATIONS
+        ):
             await conn.execute(text(statement))
         await conn.execute(text(SLUR_SEED))
         await conn.execute(text(SYSTEM_SETTINGS_SEED))
 
+
 @app.get("/")
 def root():
     return {"message": "EchoSense API is running 🎙️"}
+
 
 @app.get("/health")
 def health():

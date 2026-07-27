@@ -9,8 +9,12 @@ from app.database import get_db
 from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.alert import (
-    AlertCreate, AlertResponse, AlertAnalyticsResponse,
-    AlertSummaryResponse, PeriodStats, TopWord,
+    AlertCreate,
+    AlertResponse,
+    AlertAnalyticsResponse,
+    AlertSummaryResponse,
+    PeriodStats,
+    TopWord,
 )
 from app.notifications.push import send_expo_pushes
 from typing import List, Optional
@@ -58,7 +62,9 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
 
     token_result = await db.execute(select(User).where(User.push_token.isnot(None)))
     tokens = [u.push_token for u in token_result.scalars().all()]
-    asyncio.create_task(send_expo_pushes(tokens, new_alert.id, new_alert.severity, new_alert.location))
+    asyncio.create_task(
+        send_expo_pushes(tokens, new_alert.id, new_alert.severity, new_alert.location)
+    )
 
     return hydrate_alert(new_alert)
 
@@ -96,9 +102,7 @@ async def get_category_analytics(db: AsyncSession = Depends(get_db)):
             words = []
         word_counter.update(words)
 
-    top_detected_words = [
-        TopWord(word=w, count=c) for w, c in word_counter.most_common(10)
-    ]
+    top_detected_words = [TopWord(word=w, count=c) for w, c in word_counter.most_common(10)]
 
     return AlertAnalyticsResponse(
         total_alerts=len(alerts),
@@ -155,11 +159,13 @@ async def get_summary_analytics(db: AsyncSession = Depends(get_db)):
     all_alerts = all_result.scalars().all()
 
     today_alerts = [
-        a for a in all_alerts
+        a
+        for a in all_alerts
         if a.created_at and a.created_at.replace(tzinfo=timezone.utc) >= today_start
     ]
     week_alerts = [
-        a for a in all_alerts
+        a
+        for a in all_alerts
         if a.created_at and a.created_at.replace(tzinfo=timezone.utc) >= week_start
     ]
 

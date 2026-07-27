@@ -1,5 +1,4 @@
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, cast, Date
 from typing import List
@@ -9,14 +8,34 @@ from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.report import ReportCreate, ReportOut
 from app.routers.auth import get_current_user
+from app.services.audit import (
+    AuditAction,
+    AuditResource,
+    AuditStatus,
+    record_audit_event,
+)
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
 async def require_admin_or_counselor(
+    request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     if current_user.role not in ("admin", "counselor"):
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.PERMISSION_DENIED,
+            AuditResource.SECURITY,
+            AuditStatus.FAILURE,
+            actor=current_user,
+            target=request.url.path,
+            description="User was denied access to a restricted report operation.",
+            metadata={"method": request.method},
+        )
+        await db.commit()
         raise HTTPException(status_code=403, detail="Admin or counselor access required")
     return current_user
 
@@ -32,6 +51,7 @@ async def get_reports(
 
 @router.post("/", response_model=ReportOut, status_code=201)
 async def generate_report(
+    request: Request,
     body: ReportCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_counselor),
@@ -52,6 +72,23 @@ async def generate_report(
         total_incidents=total,
     )
     db.add(report)
+    await db.flush()
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.GENERATE_REPORT,
+        AuditResource.REPORT,
+        AuditStatus.SUCCESS,
+        actor=current_user,
+        resource_id=report.report_id,
+        target=f"{body.date_from.isoformat()} to {body.date_to.isoformat()}",
+        description="User generated an incident summary report.",
+        metadata={
+            "date_from": body.date_from,
+            "date_to": body.date_to,
+            "total_incidents": total,
+        },
+    )
     await db.commit()
     await db.refresh(report)
     return report
