@@ -1,6 +1,8 @@
 from datetime import datetime
+import math
 from typing import Dict, List, Optional
 import unicodedata
+from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -39,6 +41,7 @@ class MatchedTermResponse(BaseModel):
 
 
 class AlertCreate(BaseModel):
+    event_id: Optional[UUID] = None
     severity: str
     confidence: float
     duration: float
@@ -50,6 +53,7 @@ class AlertCreate(BaseModel):
     detected_words: Optional[List[str]] = None
     yamnet_class: Optional[str] = None
     yamnet_score: Optional[float] = None
+    yamnet_ran: Optional[bool] = None
     emotion: Optional[str] = None
     rms: Optional[float] = None
     energy_variance: Optional[float] = None
@@ -65,6 +69,31 @@ class AlertCreate(BaseModel):
     soft_hits: Optional[List[str]] = None
     duration_gate: Optional[str] = None
     required_duration: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validate_yamnet_evidence(self):
+        if self.yamnet_ran is None:
+            return self
+
+        if not self.yamnet_ran:
+            self.yamnet_class = "NotRun"
+            self.yamnet_score = 0.0
+            return self
+
+        label = (self.yamnet_class or "").strip()
+        if not label or label.casefold() == "notrun":
+            raise ValueError(
+                "yamnet_class must be an actual non-empty label when yamnet_ran is true"
+            )
+        if (
+            self.yamnet_score is None
+            or not math.isfinite(self.yamnet_score)
+            or not 0.0 <= self.yamnet_score <= 1.0
+        ):
+            raise ValueError("yamnet_score must be between 0 and 1 when yamnet_ran is true")
+
+        self.yamnet_class = label
+        return self
 
     @model_validator(mode="after")
     def reject_duplicate_matched_terms(self):
@@ -84,6 +113,7 @@ class AlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    event_id: Optional[UUID] = None
     severity: str
     confidence: float
     duration: float
@@ -94,6 +124,7 @@ class AlertResponse(BaseModel):
     detected_words: Optional[List[str]] = None
     yamnet_class: Optional[str] = None
     yamnet_score: Optional[float] = None
+    yamnet_ran: Optional[bool] = None
     emotion: Optional[str] = None
     rms: Optional[float] = None
     energy_variance: Optional[float] = None

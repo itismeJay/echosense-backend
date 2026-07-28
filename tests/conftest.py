@@ -1,7 +1,9 @@
 import os
+from unittest.mock import AsyncMock
 from urllib.parse import urlparse
 
 import httpx
+import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
@@ -27,6 +29,13 @@ from app.main import app  # noqa: E402
 from app.models.system_settings import SystemSettings  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.routers.auth import create_token, pwd_context  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def prevent_external_notifications(monkeypatch):
+    mocked_sender = AsyncMock()
+    monkeypatch.setattr("app.routers.alerts.send_expo_pushes", mocked_sender)
+    return mocked_sender
 
 
 @pytest_asyncio.fixture(autouse=True)

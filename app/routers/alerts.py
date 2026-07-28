@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.alert import Alert, AlertMatchedTerm
 from app.models.slur import SlurEntry
@@ -105,10 +106,25 @@ async def resolve_matched_terms(
     return resolved
 
 
+async def get_alert_by_event_id(event_id, db: AsyncSession) -> Alert | None:
+    result = await db.execute(
+        select(Alert)
+        .where(Alert.event_id == event_id)
+        .options(selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.dictionary_term))
+    )
+    return result.scalar_one_or_none()
+
+
 @router.post("/", response_model=AlertResponse)
 async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
+    if alert.event_id is not None:
+        existing_alert = await get_alert_by_event_id(alert.event_id, db)
+        if existing_alert is not None:
+            return hydrate_alert(existing_alert)
+
     resolved_terms = await resolve_matched_terms(alert.matched_terms, db)
     new_alert = Alert(
+        event_id=alert.event_id,
         severity=alert.severity,
         confidence=alert.confidence,
         duration=alert.duration,
@@ -117,6 +133,7 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
         detected_words=json.dumps(alert.detected_words or []),
         yamnet_class=alert.yamnet_class,
         yamnet_score=alert.yamnet_score,
+        yamnet_ran=alert.yamnet_ran,
         emotion=alert.emotion,
         rms=alert.rms,
         energy_variance=alert.energy_variance,
@@ -140,7 +157,15 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
             )
         )
     db.add(new_alert)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        if alert.event_id is not None:
+            existing_alert = await get_alert_by_event_id(alert.event_id, db)
+            if existing_alert is not None:
+                return hydrate_alert(existing_alert)
+        raise
     result = await db.execute(
         select(Alert)
         .where(Alert.id == new_alert.id)

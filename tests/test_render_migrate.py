@@ -63,6 +63,11 @@ def _upgrade_to(database_url: str, revision: str, monkeypatch: pytest.MonkeyPatc
     command.upgrade(render_migrate._alembic_config(), revision)
 
 
+def _downgrade_to(database_url: str, revision: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALEMBIC_DATABASE_URL", database_url)
+    command.downgrade(render_migrate._alembic_config(), revision)
+
+
 def _seed_legacy_rows(database_url: str) -> None:
     engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
     with engine.begin() as connection:
@@ -244,6 +249,76 @@ def test_existing_alerts_and_dictionary_remain_readable_after_migration(
         ("high", "ceb", None),
     ]
     assert dictionary_languages == ["fil", "ceb", "en"]
+
+
+def test_edge_audio_event_migration_upgrades_downgrades_and_upgrades_again(
+    disposable_database,
+    monkeypatch,
+):
+    previous_revision = "20260728_0004"
+    _upgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        legacy_alert_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO alerts (severity, confidence, duration, language)
+                VALUES ('low', 0.5, 0.4, 'unknown')
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+    engine.dispose()
+
+    _upgrade_to(disposable_database, render_migrate.HEAD_REVISION, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        columns = {column["name"]: column for column in inspector.get_columns("alerts")}
+        unique_constraints = {
+            constraint["name"] for constraint in inspector.get_unique_constraints("alerts")
+        }
+        check_constraints = {
+            constraint["name"] for constraint in inspector.get_check_constraints("alerts")
+        }
+        legacy_values = connection.execute(
+            sa.text(
+                """
+                SELECT event_id, yamnet_ran
+                FROM alerts
+                WHERE id = :alert_id
+                """
+            ),
+            {"alert_id": legacy_alert_id},
+        ).one()
+
+    assert columns["event_id"]["nullable"] is True
+    assert str(columns["event_id"]["type"]) == "UUID"
+    assert columns["yamnet_ran"]["nullable"] is True
+    assert isinstance(columns["yamnet_ran"]["type"], sa.Boolean)
+    assert "uq_alerts_event_id" in unique_constraints
+    assert "ck_alerts_yamnet_evidence" in check_constraints
+    assert legacy_values == (None, None)
+    engine.dispose()
+
+    _downgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        downgraded_columns = {
+            column["name"] for column in sa.inspect(connection).get_columns("alerts")
+        }
+    engine.dispose()
+
+    assert "event_id" not in downgraded_columns
+    assert "yamnet_ran" not in downgraded_columns
+    assert _revision(disposable_database) == previous_revision
+
+    _upgrade_to(disposable_database, render_migrate.HEAD_REVISION, monkeypatch)
+
+    assert _revision(disposable_database) == render_migrate.HEAD_REVISION
 
 
 def test_partial_schema_is_rejected_without_mutation(disposable_database, monkeypatch):

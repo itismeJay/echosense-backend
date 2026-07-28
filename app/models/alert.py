@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -67,9 +69,22 @@ class Alert(Base):
             "(language_confidence >= 0 AND language_confidence <= 1)",
             name="ck_alerts_language_confidence",
         ),
+        CheckConstraint(
+            "yamnet_ran IS NULL OR "
+            "(yamnet_ran = false AND yamnet_class IS NOT NULL "
+            "AND yamnet_class = 'NotRun' AND yamnet_score IS NOT NULL "
+            "AND yamnet_score = 0) OR "
+            "(yamnet_ran = true AND yamnet_class IS NOT NULL "
+            "AND btrim(yamnet_class) <> '' AND yamnet_score IS NOT NULL "
+            "AND lower(btrim(yamnet_class)) <> 'notrun' "
+            "AND yamnet_score >= 0 AND yamnet_score <= 1)",
+            name="ck_alerts_yamnet_evidence",
+        ),
+        UniqueConstraint("event_id", name="uq_alerts_event_id"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(UUID(as_uuid=True), nullable=True)
     severity = Column(String, nullable=False)
     confidence = Column(Float, nullable=False)
     duration = Column(Float, nullable=False)
@@ -82,6 +97,7 @@ class Alert(Base):
     detected_words = Column(Text, nullable=True)  # JSON-encoded list[str]
     yamnet_class = Column(String, nullable=True)
     yamnet_score = Column(Float, nullable=True)
+    yamnet_ran = Column(Boolean, nullable=True)
     emotion = Column(String, nullable=True)
     rms = Column(Float, nullable=True)
     energy_variance = Column(Float, nullable=True)
