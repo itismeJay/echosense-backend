@@ -36,6 +36,7 @@ ALERT_COLUMN_MIGRATIONS = [
     # v2 Pi payload fields
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS categories TEXT",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS language VARCHAR",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS language_confidence DOUBLE PRECISION",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS hard_hits TEXT",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS soft_hits TEXT",
     # v3 Pi payload fields
@@ -54,21 +55,21 @@ SYSTEM_SETTINGS_COLUMN_MIGRATIONS = [
 # Seed the slur dictionary with default terms (idempotent via ON CONFLICT).
 SLUR_SEED = """
 INSERT INTO slur_dictionary (slur_text, language, severity_weight) VALUES
-  ('putangina', 'Bisaya', 0.9),
-  ('gago', 'Filipino', 0.8),
-  ('stupid', 'English', 0.7),
-  ('bobo', 'Filipino', 0.6),
-  ('tanga', 'Filipino', 0.8),
-  ('yawa', 'Bisaya', 0.85),
-  ('buang', 'Bisaya', 0.75),
-  ('pisti', 'Bisaya', 0.7),
-  ('bastos', 'Bisaya', 0.65),
-  ('ulol', 'Filipino', 0.75),
-  ('tarantado', 'Filipino', 0.8),
-  ('idiot', 'English', 0.7),
-  ('worthless', 'English', 0.6),
-  ('dumb', 'English', 0.55),
-  ('fool', 'English', 0.5)
+  ('putangina', 'ceb', 0.9),
+  ('gago', 'fil', 0.8),
+  ('stupid', 'en', 0.7),
+  ('bobo', 'fil', 0.6),
+  ('tanga', 'fil', 0.8),
+  ('yawa', 'ceb', 0.85),
+  ('buang', 'ceb', 0.75),
+  ('pisti', 'ceb', 0.7),
+  ('bastos', 'ceb', 0.65),
+  ('ulol', 'fil', 0.75),
+  ('tarantado', 'fil', 0.8),
+  ('idiot', 'en', 0.7),
+  ('worthless', 'en', 0.6),
+  ('dumb', 'en', 0.55),
+  ('fool', 'en', 0.5)
 ON CONFLICT (slur_text) DO NOTHING
 """
 

@@ -1,10 +1,73 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from app.database import Base
+from app.languages import LanguageCode
+
+
+class AlertMatchedTerm(Base):
+    __tablename__ = "alert_matched_terms"
+    __table_args__ = (
+        UniqueConstraint(
+            "alert_id",
+            "term_id",
+            name="uq_alert_matched_terms_alert_id_term_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    alert_id = Column(
+        Integer,
+        ForeignKey("alerts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    term_id = Column(
+        Integer,
+        ForeignKey("slur_dictionary.term_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    matched_text = Column(String(100), nullable=False)
+    match_type = Column(String(30), nullable=False, default="exact", server_default="exact")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    alert = relationship("Alert", back_populates="matched_terms")
+    dictionary_term = relationship("SlurEntry", back_populates="alert_matches")
+
+    @property
+    def term(self) -> str:
+        return self.dictionary_term.slur_text
+
+    @property
+    def language(self) -> str:
+        return self.dictionary_term.language
 
 
 class Alert(Base):
     __tablename__ = "alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "language IN ('fil', 'ceb', 'en', 'mixed', 'unknown')",
+            name="ck_alerts_language",
+        ),
+        CheckConstraint(
+            "language_confidence IS NULL OR "
+            "(language_confidence >= 0 AND language_confidence <= 1)",
+            name="ck_alerts_language_confidence",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     severity = Column(String, nullable=False)
@@ -28,8 +91,23 @@ class Alert(Base):
 
     # v2 fields from upgraded Pi payload
     categories = Column(Text, nullable=True)  # JSON-encoded list[str]
-    language = Column(String(10), nullable=True)  # e.g. "tl", "ceb", "en"
+    language = Column(
+        String(10),
+        nullable=False,
+        default=LanguageCode.UNKNOWN.value,
+        server_default=LanguageCode.UNKNOWN.value,
+        index=True,
+    )
+    language_confidence = Column(Float, nullable=True)
     hard_hits = Column(Text, nullable=True)  # JSON-encoded list[str]
     soft_hits = Column(Text, nullable=True)  # JSON-encoded list[str]
     duration_gate = Column(String(20), nullable=True)  # e.g. "threat", "hard", "repeated"
     required_duration = Column(Float, nullable=True)
+
+    matched_terms = relationship(
+        "AlertMatchedTerm",
+        back_populates="alert",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="AlertMatchedTerm.id",
+    )

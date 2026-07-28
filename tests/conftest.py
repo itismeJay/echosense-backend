@@ -38,7 +38,7 @@ async def isolated_database():
         await connection.execute(
             text(
                 """
-                TRUNCATE TABLE reports, audit_logs, slur_dictionary,
+                TRUNCATE TABLE reports, audit_logs, alert_matched_terms, slur_dictionary,
                     system_settings, alerts, users
                 RESTART IDENTITY CASCADE
                 """

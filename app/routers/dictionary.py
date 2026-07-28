@@ -6,6 +6,8 @@ from app.database import get_db
 from app.models.slur import SlurEntry as SlurModel
 from app.models.user import User
 from app.schemas.dictionary import SlurEntry, SlurCreate
+from app.schemas.alert import normalize_term
+from app.models.alert import AlertMatchedTerm
 from app.routers.auth import require_admin
 from app.services.audit import (
     AuditAction,
@@ -30,13 +32,16 @@ async def add_slur(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    existing = await db.execute(select(SlurModel).where(SlurModel.slur_text == body.slur_text))
-    if existing.scalar_one_or_none():
+    normalized_text = normalize_term(body.slur_text)
+    existing = await db.execute(select(SlurModel))
+    if any(
+        normalize_term(entry.slur_text) == normalized_text for entry in existing.scalars().all()
+    ):
         raise HTTPException(status_code=409, detail="Slur already exists")
 
     entry = SlurModel(
-        slur_text=body.slur_text,
-        language=body.language,
+        slur_text=body.slur_text.strip(),
+        language=body.language.value,
         severity_weight=body.severity_weight,
     )
     db.add(entry)
@@ -75,6 +80,14 @@ async def delete_slur(
     target = entry.slur_text
     language = entry.language
     severity_weight = entry.severity_weight
+    relation = await db.execute(
+        select(AlertMatchedTerm.id).where(AlertMatchedTerm.term_id == term_id).limit(1)
+    )
+    if relation.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Term is linked to an alert and cannot be deleted",
+        )
     await db.delete(entry)
     await record_audit_event(
         db,

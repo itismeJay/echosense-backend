@@ -1,6 +1,41 @@
-from pydantic import BaseModel
 from datetime import datetime
-from typing import Any, Dict, Optional, List
+from typing import Dict, List, Optional
+import unicodedata
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
+from app.languages import DictionaryLanguageCode, LanguageCode
+
+
+def normalize_term(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).strip().casefold().split())
+
+
+class MatchedTermCreate(BaseModel):
+    term_id: Optional[int] = Field(default=None, gt=0)
+    term: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        validation_alias=AliasChoices("term", "matched_text"),
+    )
+    language: Optional[DictionaryLanguageCode] = None
+    match_type: str = Field(default="exact", min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def require_term_identifier(self):
+        if self.term_id is None and self.term is None:
+            raise ValueError("matched term must include term_id or term")
+        return self
+
+
+class MatchedTermResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    term_id: int
+    term: str
+    language: DictionaryLanguageCode
+    match_type: str
 
 
 class AlertCreate(BaseModel):
@@ -8,7 +43,10 @@ class AlertCreate(BaseModel):
     confidence: float
     duration: float
     location: Optional[str] = "Classroom"
-    transcribed_text: Optional[str] = None
+    transcribed_text: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("transcribed_text", "transcript"),
+    )
     detected_words: Optional[List[str]] = None
     yamnet_class: Optional[str] = None
     yamnet_score: Optional[float] = None
@@ -20,14 +58,31 @@ class AlertCreate(BaseModel):
     waveform_snapshot: Optional[List[int]] = None
     # v2 fields
     categories: Optional[List[str]] = None
-    language: Optional[str] = None
+    language: LanguageCode = LanguageCode.UNKNOWN
+    language_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    matched_terms: List[MatchedTermCreate] = Field(default_factory=list)
     hard_hits: Optional[List[str]] = None
     soft_hits: Optional[List[str]] = None
     duration_gate: Optional[str] = None
     required_duration: Optional[float] = None
 
+    @model_validator(mode="after")
+    def reject_duplicate_matched_terms(self):
+        identifiers: set[tuple[str, object]] = set()
+        for matched_term in self.matched_terms:
+            if matched_term.term_id is not None:
+                identifier = ("id", matched_term.term_id)
+            else:
+                identifier = ("term", normalize_term(matched_term.term or ""))
+            if identifier in identifiers:
+                raise ValueError("matched_terms contains a duplicate entry")
+            identifiers.add(identifier)
+        return self
+
 
 class AlertResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     severity: str
     confidence: float
@@ -47,14 +102,13 @@ class AlertResponse(BaseModel):
     waveform_snapshot: Optional[List[int]] = None
     # v2 fields
     categories: Optional[List[str]] = None
-    language: Optional[str] = None
+    language: LanguageCode
+    language_confidence: Optional[float] = None
+    matched_terms: List[MatchedTermResponse] = Field(default_factory=list)
     hard_hits: Optional[List[str]] = None
     soft_hits: Optional[List[str]] = None
     duration_gate: Optional[str] = None
     required_duration: Optional[float] = None
-
-    class Config:
-        from_attributes = True
 
 
 class AlertUpdate(BaseModel):

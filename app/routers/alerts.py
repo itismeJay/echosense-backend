@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
-from app.models.alert import Alert
+from app.models.alert import Alert, AlertMatchedTerm
+from app.models.slur import SlurEntry
 from app.models.user import User
 from app.schemas.alert import (
     AlertCreate,
@@ -15,9 +16,13 @@ from app.schemas.alert import (
     AlertSummaryResponse,
     PeriodStats,
     TopWord,
+    normalize_term,
 )
 from app.notifications.push import send_expo_pushes
 from typing import List, Optional
+from sqlalchemy.orm import selectinload
+
+from app.languages import LanguageCode
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
@@ -32,8 +37,77 @@ def hydrate_alert(alert: Alert) -> Alert:
     return alert
 
 
+async def resolve_matched_terms(
+    requested_terms,
+    db: AsyncSession,
+) -> list[tuple[SlurEntry, str, str]]:
+    if not requested_terms:
+        return []
+
+    result = await db.execute(select(SlurEntry))
+    dictionary_entries = list(result.scalars().all())
+    entries_by_id = {entry.term_id: entry for entry in dictionary_entries}
+    entries_by_text: dict[str, list[SlurEntry]] = {}
+    for entry in dictionary_entries:
+        entries_by_text.setdefault(normalize_term(entry.slur_text), []).append(entry)
+
+    resolved: list[tuple[SlurEntry, str, str]] = []
+    resolved_ids: set[int] = set()
+    for requested in requested_terms:
+        if requested.term_id is not None:
+            entry = entries_by_id.get(requested.term_id)
+            if entry is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Monitored term {requested.term_id} does not exist",
+                )
+        else:
+            matches = entries_by_text.get(normalize_term(requested.term or ""), [])
+            if not matches:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Matched text does not correspond to a monitored term",
+                )
+            if len(matches) > 1:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Matched text is ambiguous; provide term_id",
+                )
+            entry = matches[0]
+
+        if requested.term is not None and normalize_term(requested.term) != normalize_term(
+            entry.slur_text
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Matched text does not correspond to monitored term {entry.term_id}",
+            )
+        if requested.language is not None and requested.language.value != entry.language:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Language does not correspond to monitored term {entry.term_id}",
+            )
+        if entry.term_id in resolved_ids:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Monitored term {entry.term_id} is duplicated",
+            )
+
+        resolved_ids.add(entry.term_id)
+        resolved.append(
+            (
+                entry,
+                (requested.term or entry.slur_text).strip(),
+                requested.match_type,
+            )
+        )
+
+    return resolved
+
+
 @router.post("/", response_model=AlertResponse)
 async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
+    resolved_terms = await resolve_matched_terms(alert.matched_terms, db)
     new_alert = Alert(
         severity=alert.severity,
         confidence=alert.confidence,
@@ -50,15 +124,29 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
         peak_to_average=alert.peak_to_average,
         waveform_snapshot=json.dumps(alert.waveform_snapshot or []),
         categories=json.dumps(alert.categories or []),
-        language=alert.language,
+        language=alert.language.value,
+        language_confidence=alert.language_confidence,
         hard_hits=json.dumps(alert.hard_hits or []),
         soft_hits=json.dumps(alert.soft_hits or []),
         duration_gate=alert.duration_gate,
         required_duration=alert.required_duration,
     )
+    for dictionary_term, matched_text, match_type in resolved_terms:
+        new_alert.matched_terms.append(
+            AlertMatchedTerm(
+                dictionary_term=dictionary_term,
+                matched_text=matched_text,
+                match_type=match_type,
+            )
+        )
     db.add(new_alert)
     await db.commit()
-    await db.refresh(new_alert)
+    result = await db.execute(
+        select(Alert)
+        .where(Alert.id == new_alert.id)
+        .options(selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.dictionary_term))
+    )
+    new_alert = result.scalar_one()
 
     token_result = await db.execute(select(User).where(User.push_token.isnot(None)))
     tokens = [u.push_token for u in token_result.scalars().all()]
@@ -180,15 +268,19 @@ async def get_summary_analytics(db: AsyncSession = Depends(get_db)):
 async def get_alerts(
     severity: Optional[str] = None,
     category: Optional[str] = None,
-    language: Optional[str] = None,
+    language: Optional[LanguageCode] = None,
     duration_gate: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Alert).order_by(Alert.created_at.desc())
+    query = (
+        select(Alert)
+        .options(selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.dictionary_term))
+        .order_by(Alert.created_at.desc())
+    )
     if severity:
         query = query.where(Alert.severity == severity)
     if language:
-        query = query.where(Alert.language == language)
+        query = query.where(Alert.language == language.value)
     if category:
         query = query.where(Alert.categories.like(f'%"{category}"%'))
     if duration_gate:
@@ -199,7 +291,11 @@ async def get_alerts(
 
 @router.get("/{alert_id}", response_model=AlertResponse)
 async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Alert).where(Alert.id == alert_id))
+    result = await db.execute(
+        select(Alert)
+        .where(Alert.id == alert_id)
+        .options(selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.dictionary_term))
+    )
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")

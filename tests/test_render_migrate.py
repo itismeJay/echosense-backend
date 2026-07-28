@@ -123,6 +123,37 @@ def _legacy_audit_count(database_url: str) -> int:
     return count
 
 
+def _seed_legacy_alerts_and_dictionary(database_url: str) -> None:
+    engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO alerts (
+                    severity, confidence, duration, location, status, language
+                )
+                VALUES
+                    ('medium', 0.8, 1.2, 'Legacy Room', 'active', NULL),
+                    ('high', 0.9, 2.4, 'Legacy Room', 'active', 'Bisaya')
+                """
+            )
+        )
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO slur_dictionary (
+                    slur_text, language, severity_weight
+                )
+                VALUES
+                    ('legacy-fil', 'Filipino', 0.6),
+                    ('legacy-ceb', 'Bisaya', 0.7),
+                    ('legacy-en', 'English', 0.5)
+                """
+            )
+        )
+    engine.dispose()
+
+
 def test_missing_migration_url_never_falls_back_to_application_url(monkeypatch):
     monkeypatch.delenv("ALEMBIC_DATABASE_URL", raising=False)
     monkeypatch.setenv(
@@ -171,6 +202,48 @@ def test_database_at_head_is_idempotent(disposable_database, monkeypatch):
     render_migrate.run_migrations()
 
     assert _revision(disposable_database) == render_migrate.HEAD_REVISION
+
+
+def test_existing_alerts_and_dictionary_remain_readable_after_migration(
+    disposable_database,
+    monkeypatch,
+):
+    _upgrade_to(disposable_database, render_migrate.BASELINE_REVISION, monkeypatch)
+    _seed_legacy_alerts_and_dictionary(disposable_database)
+
+    _upgrade_to(disposable_database, "head", monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        alerts = connection.execute(
+            sa.text(
+                """
+                SELECT severity, language, language_confidence
+                FROM alerts
+                ORDER BY id
+                """
+            )
+        ).all()
+        dictionary_languages = (
+            connection.execute(
+                sa.text(
+                    """
+                SELECT language
+                FROM slur_dictionary
+                ORDER BY term_id
+                """
+                )
+            )
+            .scalars()
+            .all()
+        )
+    engine.dispose()
+
+    assert alerts == [
+        ("medium", "unknown", None),
+        ("high", "ceb", None),
+    ]
+    assert dictionary_languages == ["fil", "ceb", "en"]
 
 
 def test_partial_schema_is_rejected_without_mutation(disposable_database, monkeypatch):
