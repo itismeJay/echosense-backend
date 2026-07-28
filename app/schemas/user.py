@@ -30,3 +30,12 @@ class TokenResponse(BaseModel):
 
 class PushTokenRequest(BaseModel):
     token: str
+
+
+class NotificationRecipientAudit(BaseModel):
+    controlled_test_mode: bool
+    configured_recipient_resolved: bool
+    eligible_recipient_count: int
+    recipient_identifier_masked: str | None
+    has_push_token: bool
+    failure_reason: str | None = None

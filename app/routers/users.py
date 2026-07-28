@@ -4,8 +4,14 @@ from sqlalchemy import select
 from typing import List
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import UserOut, PushTokenRequest, RegisterRequest
+from app.schemas.user import (
+    NotificationRecipientAudit,
+    PushTokenRequest,
+    RegisterRequest,
+    UserOut,
+)
 from app.routers.auth import require_admin, get_current_user, pwd_context
+from app.services.notification_recipients import resolve_notification_recipients
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -68,6 +74,30 @@ async def get_users(
 ):
     result = await db.execute(select(User))
     return [UserOut(id=str(u.id), email=u.email, role=u.role) for u in result.scalars().all()]
+
+
+@router.get(
+    "/notification-recipient-audit",
+    response_model=NotificationRecipientAudit,
+)
+async def audit_notification_recipient(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    selection = await resolve_notification_recipients(db, emit_log=False)
+    audit = NotificationRecipientAudit(
+        controlled_test_mode=selection.controlled_test_mode,
+        configured_recipient_resolved=selection.configured_recipient_resolved,
+        eligible_recipient_count=selection.eligible_recipient_count,
+        recipient_identifier_masked=selection.recipient_identifier_masked,
+        has_push_token=selection.has_push_token,
+        failure_reason=selection.failure_reason,
+    )
+    if selection.controlled_test_mode and (
+        selection.failure_reason is not None or selection.eligible_recipient_count != 1
+    ):
+        raise HTTPException(status_code=409, detail=audit.model_dump())
+    return audit
 
 
 @router.delete("/{user_id}", status_code=204)

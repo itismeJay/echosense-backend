@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.alert import Alert, AlertMatchedTerm
 from app.models.slur import SlurEntry
-from app.models.user import User
 from app.schemas.alert import (
     AlertCreate,
     AlertResponse,
@@ -20,6 +19,7 @@ from app.schemas.alert import (
     normalize_term,
 )
 from app.notifications.push import send_expo_pushes
+from app.services.notification_recipients import resolve_notification_recipients
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
 
@@ -173,11 +173,16 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
     )
     new_alert = result.scalar_one()
 
-    token_result = await db.execute(select(User).where(User.push_token.isnot(None)))
-    tokens = [u.push_token for u in token_result.scalars().all()]
-    asyncio.create_task(
-        send_expo_pushes(tokens, new_alert.id, new_alert.severity, new_alert.location)
-    )
+    recipients = await resolve_notification_recipients(db)
+    if not recipients.controlled_test_mode or recipients.failure_reason is None:
+        asyncio.create_task(
+            send_expo_pushes(
+                list(recipients.tokens),
+                new_alert.id,
+                new_alert.severity,
+                new_alert.location,
+            )
+        )
 
     return hydrate_alert(new_alert)
 
