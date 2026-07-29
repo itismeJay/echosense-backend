@@ -12,5 +12,11 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false
+      - key: ECHOSENSE_CONTROLLED_TEST_MODE
+        sync: false
+      - key: ECHOSENSE_CONTROLLED_TEST_USER_ID
+        sync: false
+      - key: EXPO_ACCESS_TOKEN
+        sync: false
       - key: RUN_LEGACY_STARTUP_MAINTENANCE
         value: "false"

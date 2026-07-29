@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     TRUSTED_PROXY_CIDRS: str = ""
     ECHOSENSE_CONTROLLED_TEST_MODE: bool = False
     ECHOSENSE_CONTROLLED_TEST_USER_ID: int | None = None
+    EXPO_ACCESS_TOKEN: str | None = None
     RUN_LEGACY_STARTUP_MAINTENANCE: bool = False
     SQL_ECHO: bool = False
     TESTING: bool = False

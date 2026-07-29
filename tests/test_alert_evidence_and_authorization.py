@@ -225,6 +225,7 @@ async def test_push_payload_uses_safe_wording_and_keeps_transcript_off_lock_scre
             "body": NOTIFICATION_TEMPLATES["HIGH"].body,
             "sound": "default",
             "priority": "high",
+            "channelId": "echosense-high-alerts",
             "data": {
                 "alertId": 42,
                 "severity": "high",

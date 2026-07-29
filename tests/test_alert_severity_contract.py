@@ -296,6 +296,9 @@ async def test_push_payload_selects_template_and_omits_sensitive_evidence(monkey
     assert message["title"] == NOTIFICATION_TEMPLATES[level].title
     assert message["body"] == NOTIFICATION_TEMPLATES[level].body
     assert message["priority"] == NOTIFICATION_TEMPLATES[level].priority
+    assert message["channelId"] == (
+        "echosense-high-alerts" if level == "HIGH" else "echosense-alerts"
+    )
     assert message["data"]["severity"] == level.lower()
     assert message["data"]["severityLevel"] == level
     assert "Private Location" not in str(message)

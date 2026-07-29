@@ -12,9 +12,9 @@ from app.services.notification_recipients import (
 )
 from tests.conftest import auth_headers
 
-SYNTHETIC_TOKEN_A = "synthetic-notification-token-a"
-SYNTHETIC_TOKEN_B = "synthetic-notification-token-b"
-SYNTHETIC_TOKEN_C = "synthetic-notification-token-c"
+SYNTHETIC_TOKEN_A = "ExpoPushToken[synthetic-notification-token-a]"
+SYNTHETIC_TOKEN_B = "ExpoPushToken[synthetic-notification-token-b]"
+SYNTHETIC_TOKEN_C = "ExponentPushToken[synthetic-notification-token-c]"
 
 
 def _alert_payload(event_id=None) -> dict:
@@ -212,10 +212,23 @@ async def test_admin_audit_reports_one_recipient_without_exposing_token(
     assert response.status_code == 200
     assert response.json() == {
         "controlled_test_mode": True,
+        "configured_user_reference_present": True,
         "configured_recipient_resolved": True,
+        "selected_recipient_count": 1,
         "eligible_recipient_count": 1,
         "recipient_identifier_masked": "user_id:configured",
+        "recipient_internal_id": f"user_id:{identities['admin']['id']}",
+        "masked_email": "a***n@school.test",
+        "role": "admin",
+        "account_active_status": "not_recorded",
         "has_push_token": True,
+        "token_structurally_valid": True,
+        "token_provider": "expo",
+        "token_duplicate_count": 0,
+        "token_last_updated": "not_recorded",
+        "token_stale_status": "not_recorded",
+        "selected_recipient_source": "controlled_user",
+        "broadcast_risk": False,
         "failure_reason": None,
     }
     assert SYNTHETIC_TOKEN_A not in response.text
