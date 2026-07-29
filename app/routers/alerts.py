@@ -19,6 +19,7 @@ from app.schemas.alert import (
     normalize_term,
 )
 from app.notifications.push import send_expo_pushes
+from app.routers.auth import require_alert_reviewer
 from app.services.notification_recipients import resolve_notification_recipients
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
@@ -188,7 +189,10 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/analytics/categories", response_model=AlertAnalyticsResponse)
-async def get_category_analytics(db: AsyncSession = Depends(get_db)):
+async def get_category_analytics(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_alert_reviewer),
+):
     result = await db.execute(select(Alert))
     alerts = result.scalars().all()
 
@@ -268,7 +272,10 @@ def _period_stats(alerts: list) -> PeriodStats:
 
 
 @router.get("/analytics/summary", response_model=AlertSummaryResponse)
-async def get_summary_analytics(db: AsyncSession = Depends(get_db)):
+async def get_summary_analytics(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_alert_reviewer),
+):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
@@ -301,6 +308,7 @@ async def get_alerts(
     language: Optional[LanguageCode] = None,
     duration_gate: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    _=Depends(require_alert_reviewer),
 ):
     query = (
         select(Alert)
@@ -320,7 +328,11 @@ async def get_alerts(
 
 
 @router.get("/{alert_id}", response_model=AlertResponse)
-async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
+async def get_alert(
+    alert_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_alert_reviewer),
+):
     result = await db.execute(
         select(Alert)
         .where(Alert.id == alert_id)

@@ -4,6 +4,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+PUSH_TITLE = "Possible aggression alert"
+PUSH_BODY = "Unverified possible-aggression alert. Human review required."
 
 
 async def send_expo_pushes(tokens: list, alert_id: int, severity: str, location: str):
@@ -12,8 +14,8 @@ async def send_expo_pushes(tokens: list, alert_id: int, severity: str, location:
     messages = [
         {
             "to": token,
-            "title": "🚨 EchoSense Alert",
-            "body": f"{severity.upper()} aggression detected in {location}",
+            "title": PUSH_TITLE,
+            "body": PUSH_BODY,
             "sound": "default",
             "data": {"alertId": alert_id, "severity": severity},
         }
@@ -25,4 +27,4 @@ async def send_expo_pushes(tokens: list, alert_id: int, severity: str, location:
             resp.raise_for_status()
             logger.info("Expo push sent to %d token(s)", len(tokens))
     except Exception as exc:
-        logger.warning("Expo push failed: %s", exc)
+        logger.warning("Expo push failed reason=%s", type(exc).__name__)

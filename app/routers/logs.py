@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.database import get_db
 from app.models.alert import Alert
+from app.routers.auth import require_alert_reviewer
 from app.schemas.alert import AlertResponse
 from app.routers.alerts import hydrate_alert
 from typing import List
@@ -16,7 +17,12 @@ EMOTION_BUCKETS = ["angry", "aggressive", "distressed", "upset", "neutral", "unk
 
 
 @router.get("/", response_model=List[AlertResponse])
-async def get_logs(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)):
+async def get_logs(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_alert_reviewer),
+):
     result = await db.execute(
         select(Alert).order_by(Alert.created_at.desc()).offset(skip).limit(limit)
     )
@@ -24,7 +30,10 @@ async def get_logs(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(g
 
 
 @router.get("/stats")
-async def get_stats(db: AsyncSession = Depends(get_db)):
+async def get_stats(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_alert_reviewer),
+):
     total = await db.execute(select(func.count(Alert.id)))
     high = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "high"))
     medium = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "medium"))

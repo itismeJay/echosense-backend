@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert, AlertMatchedTerm
 from app.models.slur import SlurEntry
+from tests.conftest import auth_headers
 
 
 def _alert_payload(**overrides) -> dict:
@@ -261,7 +262,7 @@ async def test_legacy_alert_payload_remains_accepted(client):
 
 
 @pytest.mark.asyncio
-async def test_alert_list_and_detail_include_matched_terms(client):
+async def test_alert_list_and_detail_include_matched_terms(client, identities):
     terms = await _seed_terms()
     created = await client.post(
         "/alerts/",
@@ -279,8 +280,9 @@ async def test_alert_list_and_detail_include_matched_terms(client):
     )
     alert_id = created.json()["id"]
 
-    listed = await client.get("/alerts/")
-    detail = await client.get(f"/alerts/{alert_id}")
+    headers = auth_headers(identities["staff"])
+    listed = await client.get("/alerts/", headers=headers)
+    detail = await client.get(f"/alerts/{alert_id}", headers=headers)
 
     assert listed.status_code == 200
     assert detail.status_code == 200

@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
+from tests.conftest import auth_headers
 
 
 def _alert_payload(**overrides) -> dict:
@@ -21,7 +22,7 @@ def _alert_payload(**overrides) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_yamnet_ran_event_is_accepted_persisted_and_returned(client):
+async def test_yamnet_ran_event_is_accepted_persisted_and_returned(client, identities):
     event_id = uuid4()
     response = await client.post(
         "/alerts/",
@@ -39,8 +40,9 @@ async def test_yamnet_ran_event_is_accepted_persisted_and_returned(client):
     assert response.json()["yamnet_class"] == "Speech"
     assert response.json()["yamnet_score"] == 0.83
 
-    detail = await client.get(f"/alerts/{response.json()['id']}")
-    listed = await client.get("/alerts/")
+    headers = auth_headers(identities["staff"])
+    detail = await client.get(f"/alerts/{response.json()['id']}", headers=headers)
+    listed = await client.get("/alerts/", headers=headers)
 
     assert detail.status_code == 200
     assert detail.json()["event_id"] == str(event_id)
@@ -189,7 +191,10 @@ async def test_requests_without_event_id_are_never_deduplicated(
 
 
 @pytest.mark.asyncio
-async def test_old_alert_with_null_edge_evidence_serializes_in_list_and_detail(client):
+async def test_old_alert_with_null_edge_evidence_serializes_in_list_and_detail(
+    client,
+    identities,
+):
     async with AsyncSessionLocal() as session:
         alert = Alert(
             severity="low",
@@ -204,8 +209,9 @@ async def test_old_alert_with_null_edge_evidence_serializes_in_list_and_detail(c
         await session.refresh(alert)
         alert_id = alert.id
 
-    listed = await client.get("/alerts/")
-    detail = await client.get(f"/alerts/{alert_id}")
+    headers = auth_headers(identities["staff"])
+    listed = await client.get("/alerts/", headers=headers)
+    detail = await client.get(f"/alerts/{alert_id}", headers=headers)
 
     assert listed.status_code == 200
     assert detail.status_code == 200

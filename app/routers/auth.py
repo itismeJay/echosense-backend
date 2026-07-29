@@ -21,6 +21,7 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
+ALERT_REVIEWER_ROLES = frozenset({"admin", "staff", "counselor"})
 
 
 def create_token(user: User) -> str:
@@ -73,6 +74,28 @@ async def require_admin(
         )
         await db.commit()
         raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+async def require_alert_reviewer(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if current_user.role not in ALERT_REVIEWER_ROLES:
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.PERMISSION_DENIED,
+            AuditResource.SECURITY,
+            AuditStatus.FAILURE,
+            actor=current_user,
+            target=request.url.path,
+            description="User was denied access to alert evidence.",
+            metadata={"method": request.method},
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail="Alert reviewer access required")
     return current_user
 
 

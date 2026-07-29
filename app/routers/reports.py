@@ -82,7 +82,7 @@ async def generate_report(
         actor=current_user,
         resource_id=report.report_id,
         target=f"{body.date_from.isoformat()} to {body.date_to.isoformat()}",
-        description="User generated an incident summary report.",
+        description="User generated an unverified alert summary report.",
         metadata={
             "date_from": body.date_from,
             "date_to": body.date_to,

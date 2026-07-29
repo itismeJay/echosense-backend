@@ -88,7 +88,10 @@ WHERE NOT EXISTS (SELECT 1 FROM system_settings)
 
 app = FastAPI(
     title="EchoSense API",
-    description="Real-Time Acoustic Aggression Detection System",
+    description=(
+        "Edge-based classroom acoustic risk alerting system. "
+        "Unverified possible-aggression alert. Human review required."
+    ),
     version="1.0.0",
 )
 

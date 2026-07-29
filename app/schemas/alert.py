@@ -8,6 +8,8 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from app.languages import DictionaryLanguageCode, LanguageCode
 
+MAX_ALERT_TRANSCRIPT_LENGTH = 10_000
+
 
 def normalize_term(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).strip().casefold().split())
@@ -48,6 +50,7 @@ class AlertCreate(BaseModel):
     location: Optional[str] = "Classroom"
     transcribed_text: Optional[str] = Field(
         default=None,
+        max_length=MAX_ALERT_TRANSCRIPT_LENGTH,
         validation_alias=AliasChoices("transcribed_text", "transcript"),
     )
     detected_words: Optional[List[str]] = None
@@ -69,6 +72,16 @@ class AlertCreate(BaseModel):
     soft_hits: Optional[List[str]] = None
     duration_gate: Optional[str] = None
     required_duration: Optional[float] = None
+
+    @model_validator(mode="after")
+    def require_new_event_transcript(self):
+        if self.event_id is not None and (
+            self.transcribed_text is None or not self.transcribed_text.strip()
+        ):
+            raise ValueError(
+                "transcribed_text must contain the finalized transcript when event_id is provided"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_yamnet_evidence(self):

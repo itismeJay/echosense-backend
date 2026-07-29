@@ -14,6 +14,7 @@ router = APIRouter(prefix="/system", tags=["System Logs"])
 _log_lines: deque = deque(maxlen=500)
 _log_lock = threading.Lock()
 _log_counter = 0
+REDACTED_STT_MESSAGE = "[STT] transcript redacted; alert evidence is available on alert records"
 
 
 def classify_line(message: str) -> str:
@@ -37,6 +38,12 @@ def classify_line(message: str) -> str:
         return "sender"
     else:
         return "info"
+
+
+def sanitize_line(message: str) -> str:
+    if "[STT]" in message:
+        return REDACTED_STT_MESSAGE
+    return message
 
 
 class LogIngest(BaseModel):
@@ -67,12 +74,13 @@ def ingest_logs(body: LogIngest):
     with _log_lock:
         for message in body.lines:
             _log_counter += 1
+            message_type = classify_line(message)
             _log_lines.append(
                 LogLine(
                     id=_log_counter,
                     timestamp=now,
-                    message=message,
-                    type=classify_line(message),
+                    message=sanitize_line(message),
+                    type=message_type,
                 )
             )
     return LogIngestResponse(status="ok", received=len(body.lines))
