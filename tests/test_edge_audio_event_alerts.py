@@ -197,7 +197,7 @@ async def test_old_alert_with_null_edge_evidence_serializes_in_list_and_detail(
 ):
     async with AsyncSessionLocal() as session:
         alert = Alert(
-            severity="low",
+            severity="LOW",
             confidence=0.55,
             duration=0.4,
             language="unknown",

@@ -223,7 +223,7 @@ async def test_duplicate_alert_term_relation_is_blocked_by_database():
     terms = await _seed_terms()
     async with AsyncSessionLocal() as session:
         alert = Alert(
-            severity="low",
+            severity="LOW",
             confidence=0.6,
             duration=0.5,
             language="fil",

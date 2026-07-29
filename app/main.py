@@ -44,6 +44,7 @@ ALERT_COLUMN_MIGRATIONS = [
     # v3 Pi payload fields
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS duration_gate VARCHAR(20)",
     "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS required_duration DOUBLE PRECISION",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS severity_evidence JSONB",
 ]
 
 SYSTEM_SETTINGS_COLUMN_MIGRATIONS = [

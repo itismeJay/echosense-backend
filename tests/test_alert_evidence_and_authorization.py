@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
 from app.models.user import User
-from app.notifications.push import PUSH_BODY, PUSH_TITLE, send_expo_pushes
+from app.notifications.push import NOTIFICATION_TEMPLATES, send_expo_pushes
 from app.routers.auth import create_token
 from app.schemas.alert import MAX_ALERT_TRANSCRIPT_LENGTH
 from tests.conftest import auth_headers
@@ -171,11 +171,12 @@ async def test_unknown_role_cannot_read_alert_evidence(client):
 def test_notification_and_api_wording_requires_human_review():
     from app.main import app
 
-    assert PUSH_TITLE == "Possible aggression alert"
-    assert PUSH_BODY == "Unverified possible-aggression alert. Human review required."
     assert "Unverified possible-aggression alert. Human review required." in app.description
-    assert "confirmed bullying" not in PUSH_BODY.casefold()
-    assert "aggression detected" not in PUSH_BODY.casefold()
+    assert set(NOTIFICATION_TEMPLATES) == {"LOW", "MEDIUM", "HIGH"}
+    for template in NOTIFICATION_TEMPLATES.values():
+        assert "review" in template.body.casefold()
+        assert "confirmed bullying" not in template.body.casefold()
+        assert "aggressive intent" not in template.body.casefold()
 
 
 def test_alert_contract_does_not_accept_raw_audio_fields():
@@ -220,10 +221,15 @@ async def test_push_payload_uses_safe_wording_and_keeps_transcript_off_lock_scre
     assert captured["messages"] == [
         {
             "to": "synthetic-token",
-            "title": PUSH_TITLE,
-            "body": PUSH_BODY,
+            "title": NOTIFICATION_TEMPLATES["HIGH"].title,
+            "body": NOTIFICATION_TEMPLATES["HIGH"].body,
             "sound": "default",
-            "data": {"alertId": 42, "severity": "high"},
+            "priority": "high",
+            "data": {
+                "alertId": 42,
+                "severity": "high",
+                "severityLevel": "HIGH",
+            },
         }
     ]
     assert "transcript" not in str(captured["messages"]).casefold()

@@ -126,7 +126,12 @@ async def create_alert(alert: AlertCreate, db: AsyncSession = Depends(get_db)):
     resolved_terms = await resolve_matched_terms(alert.matched_terms, db)
     new_alert = Alert(
         event_id=alert.event_id,
-        severity=alert.severity,
+        severity=alert.severity.value,
+        severity_evidence=(
+            alert.severity_evidence.model_dump(mode="json")
+            if alert.severity_evidence is not None
+            else None
+        ),
         confidence=alert.confidence,
         duration=alert.duration,
         location=alert.location,
@@ -242,11 +247,11 @@ def _period_stats(alerts: list) -> PeriodStats:
     high = medium = low = 0
 
     for a in alerts:
-        if a.severity == "high":
+        if a.severity == "HIGH":
             high += 1
-        elif a.severity == "medium":
+        elif a.severity == "MEDIUM":
             medium += 1
-        elif a.severity == "low":
+        elif a.severity == "LOW":
             low += 1
 
         if a.language:
@@ -316,7 +321,13 @@ async def get_alerts(
         .order_by(Alert.created_at.desc())
     )
     if severity:
-        query = query.where(Alert.severity == severity)
+        from app.schemas.alert import SeverityLevel
+
+        try:
+            normalized_severity = SeverityLevel.normalize(severity)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        query = query.where(Alert.severity == normalized_severity.value)
     if language:
         query = query.where(Alert.language == language.value)
     if category:

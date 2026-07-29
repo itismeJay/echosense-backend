@@ -245,8 +245,8 @@ def test_existing_alerts_and_dictionary_remain_readable_after_migration(
     engine.dispose()
 
     assert alerts == [
-        ("medium", "unknown", None),
-        ("high", "ceb", None),
+        ("MEDIUM", "unknown", None),
+        ("HIGH", "ceb", None),
     ]
     assert dictionary_languages == ["fil", "ceb", "en"]
 
@@ -319,6 +319,62 @@ def test_edge_audio_event_migration_upgrades_downgrades_and_upgrades_again(
     _upgrade_to(disposable_database, render_migrate.HEAD_REVISION, monkeypatch)
 
     assert _revision(disposable_database) == render_migrate.HEAD_REVISION
+
+
+def test_severity_evidence_migration_upgrades_and_downgrades(
+    disposable_database,
+    monkeypatch,
+):
+    previous_revision = "20260728_0005"
+    _upgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        alert_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO alerts (severity, confidence, duration, language)
+                VALUES ('medium', 0.75, 1.0, 'unknown')
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+    engine.dispose()
+
+    _upgrade_to(disposable_database, render_migrate.HEAD_REVISION, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        columns = {column["name"]: column for column in inspector.get_columns("alerts")}
+        constraints = {
+            constraint["name"] for constraint in inspector.get_check_constraints("alerts")
+        }
+        values = connection.execute(
+            sa.text("SELECT severity, severity_evidence FROM alerts WHERE id = :alert_id"),
+            {"alert_id": alert_id},
+        ).one()
+
+    assert isinstance(columns["severity_evidence"]["type"], sa.dialects.postgresql.JSONB)
+    assert columns["severity_evidence"]["nullable"] is True
+    assert "ck_alerts_severity" in constraints
+    assert values == ("MEDIUM", None)
+    engine.dispose()
+
+    _downgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        columns = {column["name"] for column in sa.inspect(connection).get_columns("alerts")}
+        severity = connection.execute(
+            sa.text("SELECT severity FROM alerts WHERE id = :alert_id"),
+            {"alert_id": alert_id},
+        ).scalar_one()
+    engine.dispose()
+
+    assert "severity_evidence" not in columns
+    assert severity == "medium"
+    assert _revision(disposable_database) == previous_revision
 
 
 def test_partial_schema_is_rejected_without_mutation(disposable_database, monkeypatch):

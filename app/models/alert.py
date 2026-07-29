@@ -11,6 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -70,6 +71,10 @@ class Alert(Base):
             name="ck_alerts_language_confidence",
         ),
         CheckConstraint(
+            "severity IN ('LOW', 'MEDIUM', 'HIGH')",
+            name="ck_alerts_severity",
+        ),
+        CheckConstraint(
             "yamnet_ran IS NULL OR "
             "(yamnet_ran = false AND yamnet_class IS NOT NULL "
             "AND yamnet_class = 'NotRun' AND yamnet_score IS NOT NULL "
@@ -86,6 +91,7 @@ class Alert(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(UUID(as_uuid=True), nullable=True)
     severity = Column(String, nullable=False)
+    severity_evidence = Column(JSONB, nullable=True)
     confidence = Column(Float, nullable=False)
     duration = Column(Float, nullable=False)
     location = Column(String, default="Classroom")

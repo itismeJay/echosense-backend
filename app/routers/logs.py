@@ -35,9 +35,9 @@ async def get_stats(
     _=Depends(require_alert_reviewer),
 ):
     total = await db.execute(select(func.count(Alert.id)))
-    high = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "high"))
-    medium = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "medium"))
-    low = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "low"))
+    high = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "HIGH"))
+    medium = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "MEDIUM"))
+    low = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "LOW"))
 
     # Emotion breakdown — group counts, mapping NULL/unrecognized into "unknown".
     emotion_breakdown = {bucket: 0 for bucket in EMOTION_BUCKETS}
