@@ -3,14 +3,20 @@ from uuid import uuid4
 
 import pytest
 
-from app.config import Settings, settings
+from app.config import (
+    CORS_ALLOWED_HEADERS,
+    CORS_ALLOWED_METHODS,
+    DEFAULT_CORS_ORIGINS,
+    Settings,
+    settings,
+)
 from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.services.notification_recipients import (
     RecipientSelection,
     evaluate_controlled_recipient,
 )
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, finalized_alert_fields
 
 SYNTHETIC_TOKEN_A = "ExpoPushToken[synthetic-notification-token-a]"
 SYNTHETIC_TOKEN_B = "ExpoPushToken[synthetic-notification-token-b]"
@@ -18,19 +24,20 @@ SYNTHETIC_TOKEN_C = "ExponentPushToken[synthetic-notification-token-c]"
 
 
 def _alert_payload(event_id=None) -> dict:
-    payload = {
-        "severity": "medium",
-        "confidence": 0.82,
-        "duration": 1.1,
-        "location": "Controlled Test Room",
-        "transcribed_text": "synthetic controlled test",
-        "language": "en",
-        "yamnet_ran": False,
-        "yamnet_class": "NotRun",
-        "yamnet_score": 0.0,
-    }
-    if event_id is not None:
-        payload["event_id"] = str(event_id)
+    payload = finalized_alert_fields(event_id)
+    payload.update(
+        {
+            "severity": "medium",
+            "confidence": 0.82,
+            "duration": 1.1,
+            "location": "Controlled Test Room",
+            "transcribed_text": "synthetic controlled test",
+            "language": "en",
+            "yamnet_ran": False,
+            "yamnet_class": "NotRun",
+            "yamnet_score": 0.0,
+        }
+    )
     return payload
 
 
@@ -67,6 +74,77 @@ def test_controlled_test_mode_defaults_to_disabled():
 
     assert isolated_settings.ECHOSENSE_CONTROLLED_TEST_MODE is False
     assert isolated_settings.ECHOSENSE_CONTROLLED_TEST_USER_ID is None
+    assert isolated_settings.cors_origins == list(DEFAULT_CORS_ORIGINS)
+
+
+def test_local_cors_origins_require_explicit_configuration():
+    isolated_settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+asyncpg://local.invalid/test",
+        SECRET_KEY="synthetic-test-secret",
+        ECHOSENSE_CORS_ORIGINS=(
+            "http://localhost:3000,http://192.168.1.92:3000,https://echosense-frontend.vercel.app"
+        ),
+    )
+
+    assert isolated_settings.cors_origins == [
+        "http://localhost:3000",
+        "http://192.168.1.92:3000",
+        "https://echosense-frontend.vercel.app",
+    ]
+
+
+def test_credentialed_cors_rejects_wildcard_origins():
+    isolated_settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+asyncpg://local.invalid/test",
+        SECRET_KEY="synthetic-test-secret",
+        ECHOSENSE_CORS_ORIGINS="*",
+    )
+
+    with pytest.raises(ValueError, match="cannot contain"):
+        isolated_settings.cors_origins
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", DEFAULT_CORS_ORIGINS)
+async def test_credentialed_cors_allows_exact_origins_methods_and_headers(client, origin):
+    response = await client.options(
+        "/alerts/",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": ",".join(CORS_ALLOWED_HEADERS),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.headers["access-control-allow-credentials"] == "true"
+    allowed_methods = {
+        method.strip() for method in response.headers["access-control-allow-methods"].split(",")
+    }
+    allowed_headers = {
+        header.strip().casefold()
+        for header in response.headers["access-control-allow-headers"].split(",")
+    }
+    assert set(CORS_ALLOWED_METHODS) <= allowed_methods
+    assert {header.casefold() for header in CORS_ALLOWED_HEADERS} <= allowed_headers
+
+
+@pytest.mark.asyncio
+async def test_credentialed_cors_rejects_unlisted_origin(client):
+    response = await client.options(
+        "/alerts/",
+        headers={
+            "Origin": "https://unlisted.example.test",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Authorization,Content-Type",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
 
 
 @pytest.mark.asyncio
@@ -85,6 +163,26 @@ async def test_disabled_mode_preserves_broadcast_selection(
     selected_tokens = prevent_external_notifications.await_args.args[0]
     assert set(selected_tokens) == {SYNTHETIC_TOKEN_A, SYNTHETIC_TOKEN_B}
     assert "[NOTIFICATION] mode=normal recipients=2" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disabled_mode_excludes_invalid_blank_and_duplicate_tokens(
+    client,
+    prevent_external_notifications,
+):
+    await _add_users(
+        SYNTHETIC_TOKEN_A,
+        f"  {SYNTHETIC_TOKEN_A}  ",
+        "malformed-token",
+        "   ",
+        SYNTHETIC_TOKEN_B,
+    )
+
+    response = await client.post("/alerts/", json=_alert_payload())
+
+    assert response.status_code == 200
+    selected_tokens = prevent_external_notifications.await_args.args[0]
+    assert selected_tokens == [SYNTHETIC_TOKEN_A, SYNTHETIC_TOKEN_B]
 
 
 @pytest.mark.asyncio

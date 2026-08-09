@@ -75,6 +75,31 @@ class Alert(Base):
             name="ck_alerts_severity",
         ),
         CheckConstraint(
+            "trigger_type IS NULL OR trigger_type IN ('KEYWORD', 'ACOUSTIC', 'TEST')",
+            name="ck_alerts_trigger_type",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('stored')",
+            name="ck_alerts_delivery_status",
+        ),
+        CheckConstraint(
+            "schema_version IS NULL OR schema_version >= 1",
+            name="ck_alerts_schema_version",
+        ),
+        CheckConstraint(
+            "event_start_timestamp IS NULL OR event_end_timestamp IS NULL OR "
+            "event_end_timestamp >= event_start_timestamp",
+            name="ck_alerts_event_timestamp_order",
+        ),
+        CheckConstraint(
+            "push_status IN ('pending', 'accepted', 'partial', 'rejected', 'failed', 'skipped')",
+            name="ck_alerts_push_status",
+        ),
+        CheckConstraint(
+            "push_attempt_count >= 0",
+            name="ck_alerts_push_attempt_count",
+        ),
+        CheckConstraint(
             "yamnet_ran IS NULL OR "
             "(yamnet_ran = false AND yamnet_class IS NOT NULL "
             "AND yamnet_class = 'NotRun' AND yamnet_score IS NOT NULL "
@@ -90,8 +115,57 @@ class Alert(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(UUID(as_uuid=True), nullable=True)
+    schema_version = Column(Integer, nullable=True)
+    trigger_type = Column(String(20), nullable=True, index=True)
+    edge_device_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("edge_devices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    classroom_name_snapshot = Column(String(200), nullable=True)
+    school_name_snapshot = Column(String(200), nullable=True)
     severity = Column(String, nullable=False)
+    severity_reasons = Column(JSONB, nullable=True)
+    review_message = Column(Text, nullable=True)
+    device_identifier = Column(String(100), nullable=True)
+    device_source = Column(JSONB, nullable=True)
+    event_start_timestamp = Column(DateTime(timezone=True), nullable=True, index=True)
+    event_end_timestamp = Column(DateTime(timezone=True), nullable=True)
     severity_evidence = Column(JSONB, nullable=True)
+    monitored_terms = Column(JSONB, nullable=True)
+    monitored_word_detected = Column(Boolean, nullable=True)
+    monitored_word_occurrences = Column(JSONB, nullable=True)
+    acoustic_trigger_evidence = Column(JSONB, nullable=True)
+    detailed_acoustic_evidence = Column(JSONB, nullable=True)
+    tone_evidence = Column(JSONB, nullable=True)
+    repetition_evidence = Column(JSONB, nullable=True)
+    direct_address_evidence = Column(JSONB, nullable=True)
+    laughter_context = Column(JSONB, nullable=True)
+    transcription_status = Column(String(100), nullable=True)
+    processing_latency = Column(JSONB, nullable=True)
+    dropped_data_metrics = Column(JSONB, nullable=True)
+    collector_statuses = Column(JSONB, nullable=True)
+    event_delivery_summary = Column(JSONB, nullable=True)
+    extension_count = Column(Integer, nullable=True)
+    extension_reasons = Column(JSONB, nullable=True)
+    maximum_duration_reached = Column(Boolean, nullable=True)
+    pre_trigger_seconds = Column(Float, nullable=True)
+    post_trigger_seconds = Column(Float, nullable=True)
+    trigger_timestamp = Column(DateTime(timezone=True), nullable=True)
+    test_mode = Column(Boolean, nullable=False, default=False, server_default="false")
+    delivery_status = Column(String(20), nullable=False, default="stored", server_default="stored")
+    request_fingerprint = Column(String(64), nullable=True)
+    push_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    push_attempt_count = Column(Integer, nullable=False, default=0, server_default="0")
+    push_last_error = Column(String(100), nullable=True)
+    push_provider_ticket_id = Column(Text, nullable=True)
+    push_submitted_at = Column(DateTime(timezone=True), nullable=True)
     confidence = Column(Float, nullable=False)
     duration = Column(Float, nullable=False)
     location = Column(String, default="Classroom")
@@ -133,3 +207,24 @@ class Alert(Base):
         lazy="selectin",
         order_by="AlertMatchedTerm.id",
     )
+    edge_device = relationship("EdgeDevice", back_populates="alerts", lazy="selectin")
+
+    @property
+    def device_id(self):
+        return self.edge_device_id
+
+    @property
+    def device_code(self) -> str | None:
+        return self.edge_device.device_code if self.edge_device is not None else None
+
+    @property
+    def device_display_name(self) -> str | None:
+        return self.edge_device.display_name if self.edge_device is not None else None
+
+    @property
+    def classroom_name(self) -> str | None:
+        return self.classroom_name_snapshot
+
+    @property
+    def school_name(self) -> str | None:
+        return self.school_name_snapshot

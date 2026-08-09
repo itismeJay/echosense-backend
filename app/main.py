@@ -2,11 +2,13 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
+from app.routers import devices
 from app.routers import dictionary, system_settings, audit_logs, reports
 from app.routers import system_logs
-from app.config import settings
+from app.config import CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS, settings
 from app.database import engine, Base
 
 # Imported so Base.metadata.create_all picks them up at startup
@@ -14,6 +16,7 @@ import app.models.slur  # noqa: F401
 import app.models.system_settings  # noqa: F401
 import app.models.audit_log  # noqa: F401
 import app.models.report  # noqa: F401
+import app.models.edge_device  # noqa: F401
 
 # Legacy startup maintenance is retained temporarily for the older non-Alembic
 # tables. Deployments using the Alembic schema should disable it with
@@ -88,7 +91,7 @@ WHERE NOT EXISTS (SELECT 1 FROM system_settings)
 """
 
 app = FastAPI(
-    title="EchoSense API",
+    title=settings.APP_NAME,
     description=(
         "Edge-based classroom acoustic risk alerting system. "
         "Unverified possible-aggression alert. Human review required."
@@ -98,10 +101,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=list(CORS_ALLOWED_METHODS),
+    allow_headers=list(CORS_ALLOWED_HEADERS),
 )
 
 
@@ -123,6 +126,33 @@ app.include_router(system_settings.router)
 app.include_router(audit_logs.router)
 app.include_router(reports.router)
 app.include_router(system_logs.router)
+app.include_router(devices.router)
+
+
+def required_ingest_header_openapi():
+    """Expose headers as required while retaining generic runtime auth errors."""
+
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    required_headers = {
+        "Idempotency-Key",
+        "X-EchoSense-Device-Id",
+        "X-EchoSense-Device-Key",
+    }
+    for parameter in schema["paths"]["/alerts/"]["post"].get("parameters", []):
+        if parameter.get("in") == "header" and parameter.get("name") in required_headers:
+            parameter["required"] = True
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = required_ingest_header_openapi
 
 
 @app.on_event("startup")

@@ -200,10 +200,17 @@ async def resolve_notification_recipients(
     if not settings.ECHOSENSE_CONTROLLED_TEST_MODE:
         result = await db.execute(select(User).where(User.push_token.isnot(None)))
         users = list(result.scalars().all())
-        tokens = tuple(user.push_token for user in users)
+        tokens: list[str] = []
+        seen_tokens: set[str] = set()
+        for user in users:
+            token = normalize_push_token(user.push_token)
+            if not is_structurally_valid_push_token(token) or token in seen_tokens:
+                continue
+            seen_tokens.add(token)
+            tokens.append(token)
         selection = RecipientSelection(
             controlled_test_mode=False,
-            tokens=tokens,
+            tokens=tuple(tokens),
             configured_recipient_resolved=False,
             recipient_identifier_masked=None,
             has_push_token=bool(tokens),

@@ -16,6 +16,10 @@ services:
         sync: false
       - key: ECHOSENSE_CONTROLLED_TEST_USER_ID
         sync: false
+      - key: ECHOSENSE_ALLOW_TEST_ALERTS
+        value: "false"
+      - key: ECHOSENSE_CORS_ORIGINS
+        value: "https://echosense-frontend.vercel.app"
       - key: EXPO_ACCESS_TOKEN
         sync: false
       - key: RUN_LEGACY_STARTUP_MAINTENANCE

@@ -5,18 +5,21 @@ from sqlalchemy import func, select
 
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, finalized_alert_fields
 
 
 def _alert_payload(**overrides) -> dict:
-    payload = {
-        "severity": "medium",
-        "confidence": 0.91,
-        "duration": 1.25,
-        "location": "Room 101",
-        "transcribed_text": "synchronized utterance",
-        "language": "en",
-    }
+    payload = finalized_alert_fields(overrides.pop("event_id", None))
+    payload.update(
+        {
+            "severity": "medium",
+            "confidence": 0.91,
+            "duration": 1.25,
+            "location": "Room 101",
+            "transcribed_text": "synchronized utterance",
+            "language": "en",
+        }
+    )
     payload.update(overrides)
     return payload
 
@@ -126,11 +129,11 @@ async def test_yamnet_ran_rejects_score_outside_probability_bounds(client, score
     )
 
     assert response.status_code == 422
-    assert "between 0 and 1" in response.text
+    assert "yamnet_score" in response.text
 
 
 @pytest.mark.asyncio
-async def test_legacy_yamnet_payload_without_new_fields_remains_accepted(client):
+async def test_finalized_payload_keeps_legacy_yamnet_fields(client):
     response = await client.post(
         "/alerts/",
         json=_alert_payload(
@@ -140,7 +143,7 @@ async def test_legacy_yamnet_payload_without_new_fields_remains_accepted(client)
     )
 
     assert response.status_code == 200
-    assert response.json()["event_id"] is None
+    assert response.json()["event_id"] is not None
     assert response.json()["yamnet_ran"] is None
     assert response.json()["yamnet_class"] == "Speech"
     assert response.json()["yamnet_score"] == 0.60
@@ -175,19 +178,19 @@ async def test_duplicate_event_is_idempotent_and_not_notified_twice(
 
 
 @pytest.mark.asyncio
-async def test_requests_without_event_id_are_never_deduplicated(
+async def test_requests_without_event_id_are_rejected(
     client,
     prevent_external_notifications,
 ):
     payload = _alert_payload(yamnet_class="Speech", yamnet_score=0.60)
+    payload.pop("event_id")
 
     first = await client.post("/alerts/", json=payload)
     second = await client.post("/alerts/", json=payload)
 
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["id"] != second.json()["id"]
-    assert prevent_external_notifications.call_count == 2
+    assert first.status_code == 422
+    assert second.status_code == 422
+    assert prevent_external_notifications.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -243,11 +246,11 @@ def test_openapi_exposes_optional_edge_audio_event_fields():
         "transcribed_text",
     ):
         assert field in request_schema["properties"]
-    assert "event_id" not in request_schema.get("required", [])
+    assert "event_id" in request_schema.get("required", [])
     assert "yamnet_ran" not in request_schema.get("required", [])
     assert {"event_id", "yamnet_ran"} <= response_schema["properties"].keys()
 
-    event_id_options = request_schema["properties"]["event_id"]["anyOf"]
-    assert {"type": "string", "format": "uuid"} in event_id_options
+    assert request_schema["properties"]["event_id"]["type"] == "string"
+    assert request_schema["properties"]["event_id"]["format"] == "uuid"
     yamnet_ran_options = request_schema["properties"]["yamnet_ran"]["anyOf"]
     assert {"type": "boolean"} in yamnet_ran_options

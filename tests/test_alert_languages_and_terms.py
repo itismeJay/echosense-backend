@@ -5,16 +5,22 @@ from sqlalchemy.exc import IntegrityError
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert, AlertMatchedTerm
 from app.models.slur import SlurEntry
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, finalized_alert_fields
 
 
 def _alert_payload(**overrides) -> dict:
-    payload = {
-        "severity": "medium",
-        "confidence": 0.91,
-        "duration": 1.25,
-        "location": "Room 101",
-    }
+    payload = finalized_alert_fields(overrides.pop("event_id", None))
+    payload.update(
+        {
+            "severity": "medium",
+            "confidence": 0.91,
+            "duration": 1.25,
+            "location": "Room 101",
+            "transcribed_text": "Synthetic finalized transcript.",
+        }
+    )
+    if "transcript" in overrides:
+        payload.pop("transcribed_text")
     payload.update(overrides)
     return payload
 
@@ -251,7 +257,7 @@ async def test_duplicate_alert_term_relation_is_blocked_by_database():
 
 
 @pytest.mark.asyncio
-async def test_legacy_alert_payload_remains_accepted(client):
+async def test_finalized_alert_preserves_legacy_response_fields(client):
     response = await client.post("/alerts/", json=_alert_payload())
 
     assert response.status_code == 200

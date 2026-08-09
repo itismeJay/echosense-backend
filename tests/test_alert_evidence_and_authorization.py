@@ -1,5 +1,3 @@
-from uuid import uuid4
-
 import pytest
 from sqlalchemy import func, select
 
@@ -9,22 +7,24 @@ from app.models.user import User
 from app.notifications.push import NOTIFICATION_TEMPLATES, send_expo_pushes
 from app.routers.auth import create_token
 from app.schemas.alert import MAX_ALERT_TRANSCRIPT_LENGTH
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, finalized_alert_fields
 
 
 def _alert_payload(**overrides) -> dict:
-    payload = {
-        "event_id": str(uuid4()),
-        "severity": "medium",
-        "confidence": 0.84,
-        "duration": 1.4,
-        "location": "Synthetic Room",
-        "transcribed_text": "Exact synthetic transcript.",
-        "language": "en",
-        "yamnet_ran": False,
-        "yamnet_class": "NotRun",
-        "yamnet_score": 0.0,
-    }
+    payload = finalized_alert_fields(overrides.pop("event_id", None))
+    payload.update(
+        {
+            "severity": "medium",
+            "confidence": 0.84,
+            "duration": 1.4,
+            "location": "Synthetic Room",
+            "transcribed_text": "Exact synthetic transcript.",
+            "language": "en",
+            "yamnet_ran": False,
+            "yamnet_class": "NotRun",
+            "yamnet_score": 0.0,
+        }
+    )
     payload.update(overrides)
     return payload
 
@@ -74,20 +74,18 @@ async def test_new_event_requires_nonblank_finalized_transcript(client, transcri
     )
 
     assert response.status_code == 422
-    assert "finalized transcript" in response.text
+    assert "transcript must be nonblank" in response.text
 
 
 @pytest.mark.asyncio
-async def test_legacy_payload_without_event_id_keeps_optional_transcript_compatibility(client):
+async def test_payload_without_event_id_is_rejected(client):
     payload = _alert_payload()
     payload.pop("event_id")
     payload["transcribed_text"] = None
 
     response = await client.post("/alerts/", json=payload)
 
-    assert response.status_code == 200
-    assert response.json()["event_id"] is None
-    assert response.json()["transcribed_text"] is None
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -212,24 +210,31 @@ async def test_push_payload_uses_safe_wording_and_keeps_transcript_off_lock_scre
     monkeypatch.setattr("app.notifications.push.httpx.AsyncClient", FakeClient)
 
     await send_expo_pushes(
-        ["synthetic-token"],
+        ["ExpoPushToken[synthetic-token]"],
         alert_id=42,
         severity="high",
         location="Synthetic Room",
+        event_id="00000000-0000-4000-8000-000000000042",
+        trigger_type="ACOUSTIC",
     )
 
     assert captured["messages"] == [
         {
-            "to": "synthetic-token",
+            "to": "ExpoPushToken[synthetic-token]",
             "title": NOTIFICATION_TEMPLATES["HIGH"].title,
             "body": NOTIFICATION_TEMPLATES["HIGH"].body,
             "sound": "default",
             "priority": "high",
             "channelId": "echosense-high-alerts",
             "data": {
+                "type": "classroom_alert",
                 "alertId": 42,
+                "event_id": "00000000-0000-4000-8000-000000000042",
                 "severity": "high",
                 "severityLevel": "HIGH",
+                "trigger_type": "ACOUSTIC",
+                "route": "/alert/42",
+                "is_test": False,
             },
         }
     ]
@@ -242,7 +247,7 @@ async def test_push_provider_failure_is_contained_without_logging_token(
     monkeypatch,
     caplog,
 ):
-    token = "synthetic-private-token"
+    token = "ExpoPushToken[synthetic-private-token]"
 
     class FailingClient:
         async def __aenter__(self):
@@ -261,6 +266,8 @@ async def test_push_provider_failure_is_contained_without_logging_token(
         alert_id=42,
         severity="high",
         location="Synthetic Room",
+        event_id="00000000-0000-4000-8000-000000000042",
+        trigger_type="KEYWORD",
     )
 
     assert "reason=RuntimeError" in caplog.text

@@ -13,6 +13,7 @@ from app.models.user import User
 from app.notifications.push import (
     ANDROID_ALERT_CHANNEL_ID,
     ANDROID_HIGH_ALERT_CHANNEL_ID,
+    ANDROID_PROVIDER_TEST_CHANNEL_ID,
     PROVIDER_TEST_BODY,
     PROVIDER_TEST_DATA_KEYS,
     PROVIDER_TEST_ROUTE,
@@ -131,6 +132,56 @@ async def test_recipient_audit_exposes_safe_comparable_identity(client, identiti
     assert audit["selected_recipient_source"] == "controlled_user"
     assert audit["broadcast_risk"] is False
     assert VALID_EXPO_TOKEN not in response.text
+
+
+@pytest.mark.asyncio
+async def test_push_token_registration_requires_authentication(client):
+    response = await client.post("/users/push-token", json={"token": VALID_EXPO_TOKEN})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_push_token_registration_validates_normalizes_and_detaches(
+    client,
+    identities,
+    caplog,
+):
+    headers = auth_headers(identities["staff"])
+    submitted_token = f"  {VALID_EXPO_TOKEN}  "
+    invalid_token = "malformed-private-token"
+
+    registered = await client.post(
+        "/users/push-token",
+        headers=headers,
+        json={"token": submitted_token},
+    )
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, identities["staff"]["id"])
+        assert user.push_token == VALID_EXPO_TOKEN
+
+    rejected = await client.post(
+        "/users/push-token",
+        headers=headers,
+        json={"token": invalid_token},
+    )
+    detached = await client.post(
+        "/users/push-token",
+        headers=headers,
+        json={"token": "   "},
+    )
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, identities["staff"]["id"])
+        assert user.push_token is None
+
+    assert registered.status_code == 200
+    assert registered.json() == {"message": "Push token saved"}
+    assert rejected.status_code == 422
+    assert rejected.json() == {"detail": "Invalid Expo push token"}
+    assert detached.status_code == 200
+    assert detached.json() == {"message": "Push token detached"}
+    assert invalid_token not in rejected.text
+    assert invalid_token not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -375,7 +426,7 @@ async def test_dry_run_is_redacted_and_performs_no_provider_request(
     assert dry_run["recipient_count"] == 1
     assert dry_run["payload"]["title"] == PROVIDER_TEST_TITLE
     assert dry_run["payload"]["body"] == PROVIDER_TEST_BODY
-    assert dry_run["payload"]["channelId"] == ANDROID_ALERT_CHANNEL_ID
+    assert dry_run["payload"]["channelId"] == ANDROID_PROVIDER_TEST_CHANNEL_ID
     assert set(dry_run["payload_data_keys"]) == PROVIDER_TEST_DATA_KEYS
     assert dry_run["expected_provider_submissions"] == 1
     assert dry_run["expected_recipients"] == 1

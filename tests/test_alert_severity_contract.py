@@ -6,28 +6,34 @@ from sqlalchemy import func, select
 
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
-from app.notifications.push import NOTIFICATION_TEMPLATES, send_expo_pushes
+from app.notifications.push import (
+    CLASSROOM_ALERT_DATA_KEYS,
+    NOTIFICATION_TEMPLATES,
+    send_expo_pushes,
+)
 from app.schemas.alert import (
     MAX_EVIDENCE_ITEMS,
     MAX_EVIDENCE_STRING_LENGTH,
     REVIEW_NOTICE,
 )
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, finalized_alert_fields
 
 
 def _payload(severity="medium", **overrides):
-    payload = {
-        "event_id": str(uuid4()),
-        "severity": severity,
-        "confidence": 0.91,
-        "duration": 1.75,
-        "location": "Synthetic Classroom",
-        "transcribed_text": "Exact Transcript — Huwag BAGUHIN.",
-        "language": "mixed",
-        "yamnet_ran": False,
-        "yamnet_class": "NotRun",
-        "yamnet_score": 0.0,
-    }
+    payload = finalized_alert_fields(overrides.pop("event_id", None))
+    payload.update(
+        {
+            "severity": severity,
+            "confidence": 0.91,
+            "duration": 1.75,
+            "location": "Synthetic Classroom",
+            "transcribed_text": "Exact Transcript — Huwag BAGUHIN.",
+            "language": "mixed",
+            "yamnet_ran": False,
+            "yamnet_class": "NotRun",
+            "yamnet_score": 0.0,
+        }
+    )
     payload.update(overrides)
     return payload
 
@@ -286,21 +292,50 @@ async def test_push_payload_selects_template_and_omits_sensitive_evidence(monkey
     monkeypatch.setattr("app.notifications.push.httpx.AsyncClient", FakeClient)
 
     await send_expo_pushes(
-        ["synthetic-token"],
+        ["ExpoPushToken[synthetic-token]"],
         alert_id=7,
         severity=level,
         location="Private Location",
+        event_id="00000000-0000-4000-8000-000000000007",
+        trigger_type="KEYWORD",
     )
 
     message = captured["messages"][0]
     assert message["title"] == NOTIFICATION_TEMPLATES[level].title
     assert message["body"] == NOTIFICATION_TEMPLATES[level].body
+    assert message["sound"] == "default"
     assert message["priority"] == NOTIFICATION_TEMPLATES[level].priority
     assert message["channelId"] == (
-        "echosense-high-alerts" if level == "HIGH" else "echosense-alerts"
+        "echosense-high-alerts" if level == "HIGH" else "echosense-phase3-alerts"
     )
-    assert message["data"]["severity"] == level.lower()
-    assert message["data"]["severityLevel"] == level
+    assert message["data"] == {
+        "type": "classroom_alert",
+        "alertId": 7,
+        "event_id": "00000000-0000-4000-8000-000000000007",
+        "severity": level.lower(),
+        "severityLevel": level,
+        "trigger_type": "KEYWORD",
+        "route": "/alert/7",
+        "is_test": False,
+    }
+    assert frozenset(message["data"]) == CLASSROOM_ALERT_DATA_KEYS
+    assert message["data"]["route"] == f"/alert/{message['data']['alertId']}"
+    prohibited = {
+        "transcript",
+        "transcribed_text",
+        "monitored_terms",
+        "severity_evidence",
+        "acoustic_trigger_evidence",
+        "classroom_name",
+        "school_name",
+        "device_id",
+        "device_code",
+        "device_identifier",
+        "authorization",
+        "device_key",
+        "push_token",
+    }
+    assert prohibited.isdisjoint(message["data"])
     assert "Private Location" not in str(message)
     assert "transcript" not in str(message).casefold()
 
@@ -327,13 +362,131 @@ async def test_push_omits_blank_and_malformed_tokens(monkeypatch):
     monkeypatch.setattr("app.notifications.push.httpx.AsyncClient", FakeClient)
 
     await send_expo_pushes(
-        [None, "", "   ", " synthetic-token "],
+        [
+            None,
+            "",
+            "   ",
+            "malformed-token",
+            " ExpoPushToken[synthetic-token] ",
+            "ExpoPushToken[synthetic-token]",
+        ],
         alert_id=7,
         severity="LOW",
         location="Private Location",
+        event_id="00000000-0000-4000-8000-000000000007",
+        trigger_type="KEYWORD",
     )
 
-    assert [message["to"] for message in captured["messages"]] == ["synthetic-token"]
+    assert [message["to"] for message in captured["messages"]] == ["ExpoPushToken[synthetic-token]"]
+
+
+@pytest.mark.asyncio
+async def test_push_detects_per_message_expo_rejection(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": [
+                    {"status": "ok", "id": "synthetic-ticket-one"},
+                    {
+                        "status": "error",
+                        "details": {"error": "DeviceNotRegistered"},
+                    },
+                ]
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("app.notifications.push.httpx.AsyncClient", FakeClient)
+
+    result = await send_expo_pushes(
+        ["ExpoPushToken[first]", "ExponentPushToken[second]"],
+        alert_id=7,
+        severity="MEDIUM",
+        location="Private Location",
+        event_id="00000000-0000-4000-8000-000000000007",
+        trigger_type="KEYWORD",
+    )
+
+    assert result.status == "partial"
+    assert result.accepted_count == 1
+    assert result.rejected_count == 1
+    assert result.last_error == "DeviceNotRegistered"
+
+
+@pytest.mark.asyncio
+async def test_phase3_test_push_uses_explicit_test_copy(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"status": "ok", "id": "synthetic-test-ticket"}]}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            captured.update(kwargs)
+            return Response()
+
+    monkeypatch.setattr("app.notifications.push.httpx.AsyncClient", FakeClient)
+
+    await send_expo_pushes(
+        ["ExpoPushToken[test-device]"],
+        alert_id=9,
+        severity="LOW",
+        location="Private Location",
+        event_id="00000000-0000-4000-8000-000000000009",
+        trigger_type="TEST",
+        is_test=True,
+    )
+
+    message = captured["json"][0]
+    assert message["title"] == "EchoSense Alert — TEST"
+    assert message["body"] == "TEST possible verbal-aggression event. Human review required."
+    assert message["sound"] == "default"
+    assert message["channelId"] == "echosense-phase3-alerts"
+    assert message["data"] == {
+        "type": "classroom_alert",
+        "alertId": 9,
+        "event_id": "00000000-0000-4000-8000-000000000009",
+        "severity": "low",
+        "severityLevel": "LOW",
+        "trigger_type": "TEST",
+        "route": "/alert/9",
+        "is_test": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_classroom_push_rejects_inconsistent_test_mapping():
+    with pytest.raises(ValueError, match="TEST state is inconsistent"):
+        await send_expo_pushes(
+            ["ExpoPushToken[test-device]"],
+            alert_id=9,
+            severity="LOW",
+            location="Private Location",
+            event_id="00000000-0000-4000-8000-000000000009",
+            trigger_type="TEST",
+            is_test=False,
+        )
 
 
 @pytest.mark.asyncio
@@ -359,7 +512,7 @@ async def test_push_provider_failure_leaves_committed_alert_stored(
                 email="push-failure@example.test",
                 hashed_password="synthetic",
                 role="staff",
-                push_token="synthetic-token",
+                push_token="ExpoPushToken[synthetic-token]",
             )
         )
         await session.commit()
@@ -368,11 +521,23 @@ async def test_push_provider_failure_leaves_committed_alert_stored(
     monkeypatch.setattr("app.routers.alerts.send_expo_pushes", send_expo_pushes)
 
     response = await client.post("/alerts/", json=_payload("HIGH"))
-    await asyncio.sleep(0)
+    alert_id = response.json()["id"]
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        async with AsyncSessionLocal() as session:
+            stored = await session.get(Alert, alert_id)
+            if stored.push_status == "failed":
+                break
 
     assert response.status_code == 200
     async with AsyncSessionLocal() as session:
-        assert await session.get(Alert, response.json()["id"]) is not None
+        stored = await session.get(Alert, alert_id)
+        assert stored is not None
+        assert stored.delivery_status == "stored"
+        assert stored.push_status == "failed"
+        assert stored.push_attempt_count == 1
+        assert stored.push_last_error == "RuntimeError"
+        assert stored.push_submitted_at is not None
 
 
 def test_openapi_documents_evidence_canonical_level_and_review_notice():
@@ -387,8 +552,16 @@ def test_openapi_documents_evidence_canonical_level_and_review_notice():
     assert severity["enum"] == ["LOW", "MEDIUM", "HIGH"]
     assert "severity_evidence" in create["properties"]
     assert "severity_evidence" not in create["required"]
-    assert {"severity", "severity_level", "severity_evidence", "review_notice"} <= (
-        response["properties"].keys()
-    )
+    assert {
+        "severity",
+        "severity_level",
+        "severity_evidence",
+        "review_notice",
+        "transcript",
+        "transcribed_text",
+        "delivery_status",
+        "push_status",
+    } <= response["properties"].keys()
+    assert {"type": "null"} in response["properties"]["push_status"]["anyOf"]
     assert evidence["additionalProperties"] is False
     assert create["additionalProperties"] is False

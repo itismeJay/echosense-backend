@@ -21,6 +21,7 @@ from app.notifications.push import (
     provider_test_payload_preview,
     submit_expo_provider_test,
 )
+from app.notifications.tokens import is_structurally_valid_push_token, normalize_push_token
 from app.services.provider_test import (
     ProviderTestGateError,
     consume_provider_test_dry_run,
@@ -85,8 +86,13 @@ async def save_push_token(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    current_user.push_token = body.token
+    normalized_token = normalize_push_token(body.token)
+    if normalized_token is not None and not is_structurally_valid_push_token(normalized_token):
+        raise HTTPException(status_code=422, detail="Invalid Expo push token")
+    current_user.push_token = normalized_token
     await db.commit()
+    if normalized_token is None:
+        return {"message": "Push token detached"}
     return {"message": "Push token saved"}
 
 

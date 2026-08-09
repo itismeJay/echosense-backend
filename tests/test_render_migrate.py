@@ -377,6 +377,155 @@ def test_severity_evidence_migration_upgrades_and_downgrades(
     assert _revision(disposable_database) == previous_revision
 
 
+def test_edge_device_migration_preserves_historical_alerts_and_downgrades(
+    disposable_database,
+    monkeypatch,
+):
+    previous_revision = "20260729_0006"
+    _upgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        alert_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO alerts (severity, confidence, duration, language)
+                VALUES ('LOW', 0.5, 0.5, 'unknown')
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+    engine.dispose()
+
+    _upgrade_to(disposable_database, render_migrate.HEAD_REVISION, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        assert "edge_devices" in inspector.get_table_names()
+        device_columns = {
+            column["name"]: column for column in inspector.get_columns("edge_devices")
+        }
+        alert_columns = {column["name"]: column for column in inspector.get_columns("alerts")}
+        foreign_keys = inspector.get_foreign_keys("alerts")
+        historical = connection.execute(
+            sa.text(
+                """
+                SELECT edge_device_id, classroom_name_snapshot, school_name_snapshot
+                FROM alerts
+                WHERE id = :alert_id
+                """
+            ),
+            {"alert_id": alert_id},
+        ).one()
+
+    assert device_columns["id"]["nullable"] is False
+    assert device_columns["api_key_hash"]["nullable"] is False
+    assert alert_columns["edge_device_id"]["nullable"] is True
+    assert any(
+        foreign_key["constrained_columns"] == ["edge_device_id"]
+        and foreign_key["referred_table"] == "edge_devices"
+        and foreign_key["options"].get("ondelete") == "SET NULL"
+        for foreign_key in foreign_keys
+    )
+    assert historical == (None, None, None)
+    engine.dispose()
+
+    _downgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        assert "edge_devices" not in inspector.get_table_names()
+        assert "edge_device_id" not in {
+            column["name"] for column in inspector.get_columns("alerts")
+        }
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM alerts WHERE id = :alert_id"),
+                {"alert_id": alert_id},
+            ).scalar_one()
+            == 1
+        )
+    engine.dispose()
+
+
+def test_finalized_phase2_migration_preserves_historical_alerts_and_downgrades(
+    disposable_database,
+    monkeypatch,
+):
+    previous_revision = "20260730_0007"
+    _upgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        alert_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO alerts (severity, confidence, duration, language)
+                VALUES ('LOW', 0.5, 0.5, 'unknown')
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+    engine.dispose()
+
+    _upgrade_to(disposable_database, render_migrate.HEAD_REVISION, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        columns = {column["name"]: column for column in inspector.get_columns("alerts")}
+        unique_constraints = {
+            constraint["name"] for constraint in inspector.get_unique_constraints("alerts")
+        }
+        check_constraints = {
+            constraint["name"] for constraint in inspector.get_check_constraints("alerts")
+        }
+        historical = connection.execute(
+            sa.text(
+                """
+                SELECT schema_version, trigger_type, test_mode, delivery_status,
+                       request_fingerprint, push_status, push_attempt_count
+                FROM alerts
+                WHERE id = :alert_id
+                """
+            ),
+            {"alert_id": alert_id},
+        ).one()
+
+    assert isinstance(columns["severity_reasons"]["type"], sa.dialects.postgresql.JSONB)
+    assert columns["schema_version"]["nullable"] is True
+    assert columns["request_fingerprint"]["nullable"] is True
+    assert "uq_alerts_event_id" in unique_constraints
+    assert {
+        "ck_alerts_trigger_type",
+        "ck_alerts_delivery_status",
+        "ck_alerts_schema_version",
+        "ck_alerts_event_timestamp_order",
+    } <= check_constraints
+    assert historical == (None, None, False, "stored", None, "pending", 0)
+    engine.dispose()
+
+    _downgrade_to(disposable_database, previous_revision, monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        downgraded_columns = {
+            column["name"] for column in sa.inspect(connection).get_columns("alerts")
+        }
+        assert "schema_version" not in downgraded_columns
+        assert "delivery_status" not in downgraded_columns
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM alerts WHERE id = :alert_id"),
+                {"alert_id": alert_id},
+            ).scalar_one()
+            == 1
+        )
+    engine.dispose()
+
+
 def test_partial_schema_is_rejected_without_mutation(disposable_database, monkeypatch):
     _upgrade_to(disposable_database, render_migrate.BASELINE_REVISION, monkeypatch)
     _seed_legacy_rows(disposable_database)
