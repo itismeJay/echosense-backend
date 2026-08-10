@@ -31,7 +31,13 @@ class AuditAction(str, Enum):
     EXPORT_AUDIT_LOGS = "EXPORT_AUDIT_LOGS"
     REGISTER_EDGE_DEVICE = "REGISTER_EDGE_DEVICE"
     UPDATE_EDGE_DEVICE = "UPDATE_EDGE_DEVICE"
+    ASSIGN_EDGE_DEVICE = "ASSIGN_EDGE_DEVICE"
+    UNASSIGN_EDGE_DEVICE = "UNASSIGN_EDGE_DEVICE"
+    ENABLE_EDGE_DEVICE = "ENABLE_EDGE_DEVICE"
+    DISABLE_EDGE_DEVICE = "DISABLE_EDGE_DEVICE"
     ROTATE_EDGE_DEVICE_KEY = "ROTATE_EDGE_DEVICE_KEY"
+    CREATE_CLASSROOM = "CREATE_CLASSROOM"
+    UPDATE_CLASSROOM = "UPDATE_CLASSROOM"
     PERMISSION_DENIED = "PERMISSION_DENIED"
 
 
@@ -43,6 +49,7 @@ class AuditResource(str, Enum):
     REPORT = "Report"
     AUDIT_LOG = "AuditLog"
     EDGE_DEVICE = "EdgeDevice"
+    CLASSROOM = "Classroom"
     SECURITY = "Security"
 
 
@@ -68,6 +75,7 @@ _SENSITIVE_KEY_PARTS = {
 _MAX_METADATA_DEPTH = 6
 _MAX_METADATA_ITEMS = 100
 _MAX_METADATA_STRING_LENGTH = 500
+_AUDIT_SCHOOL_UNSET = object()
 
 
 def _enum_value(value: str | Enum) -> str:
@@ -197,6 +205,7 @@ async def record_audit_event(
     description: Optional[str] = None,
     metadata: Optional[Mapping[str, Any]] = None,
     occurred_at: Optional[datetime] = None,
+    school_id: Any = _AUDIT_SCHOOL_UNSET,
 ) -> AuditLog:
     action_value = _enum_value(action)
     resource_value = _enum_value(resource)
@@ -209,6 +218,13 @@ async def record_audit_event(
     if status_value not in {item.value for item in AuditStatus}:
         raise ValueError("Audit status must be SUCCESS or FAILURE")
 
+    resolved_school_id = (
+        actor.school_id
+        if school_id is _AUDIT_SCHOOL_UNSET and actor is not None
+        else None
+        if school_id is _AUDIT_SCHOOL_UNSET
+        else school_id
+    )
     event = AuditLog(
         occurred_at=_utc_datetime(occurred_at),
         actor_user_id=actor.id if actor is not None else None,
@@ -220,6 +236,7 @@ async def record_audit_event(
             actor.role if actor is not None else actor_role,
             50,
         ),
+        school_id=resolved_school_id,
         action=action_value,
         resource=resource_value,
         resource_id=_sanitise_text(resource_id, 100),

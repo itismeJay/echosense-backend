@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from typing import Sequence
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -195,10 +196,14 @@ def _log_selection(selection: RecipientSelection) -> None:
 async def resolve_notification_recipients(
     db: AsyncSession,
     *,
+    school_id: UUID | None = None,
     emit_log: bool = True,
 ) -> RecipientSelection:
     if not settings.ECHOSENSE_CONTROLLED_TEST_MODE:
-        result = await db.execute(select(User).where(User.push_token.isnot(None)))
+        query = select(User).where(User.push_token.isnot(None))
+        if school_id is not None:
+            query = query.where(User.school_id == school_id)
+        result = await db.execute(query)
         users = list(result.scalars().all())
         tokens: list[str] = []
         seen_tokens: set[str] = set()
@@ -225,18 +230,22 @@ async def resolve_notification_recipients(
         if not isinstance(configured_user_id, int) or isinstance(configured_user_id, bool):
             selection = evaluate_controlled_recipient([], configured_user_id)
         else:
-            result = await db.execute(select(User).where(User.id == configured_user_id))
+            query = select(User).where(User.id == configured_user_id)
+            if school_id is not None:
+                query = query.where(User.school_id == school_id)
+            result = await db.execute(query)
             users = list(result.scalars().all())
             duplicate_token_count = 0
             if len(users) == 1:
                 normalized_token = normalize_push_token(users[0].push_token)
                 if normalized_token is not None:
-                    duplicate_result = await db.execute(
-                        select(func.count(User.id)).where(
-                            User.id != users[0].id,
-                            func.btrim(User.push_token) == normalized_token,
-                        )
+                    duplicate_query = select(func.count(User.id)).where(
+                        User.id != users[0].id,
+                        func.btrim(User.push_token) == normalized_token,
                     )
+                    if school_id is not None:
+                        duplicate_query = duplicate_query.where(User.school_id == school_id)
+                    duplicate_result = await db.execute(duplicate_query)
                     duplicate_token_count = int(duplicate_result.scalar_one())
             selection = evaluate_controlled_recipient(
                 users,

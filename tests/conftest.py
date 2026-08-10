@@ -64,10 +64,13 @@ os.environ["SQL_ECHO"] = "false"
 os.environ["TRUSTED_PROXY_CIDRS"] = ""
 os.environ["TESTING"] = "true"
 os.environ["ECHOSENSE_ALLOW_TEST_ALERTS"] = "true"
+os.environ["ECHOSENSE_CONTROLLED_TEST_MODE"] = "false"
 
 from app.database import AsyncSessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.edge_device import EdgeDevice  # noqa: E402
+from app.models.classroom import Classroom  # noqa: E402
+from app.models.school import School  # noqa: E402
 from app.models.system_settings import SystemSettings  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.routers.auth import create_token, pwd_context  # noqa: E402
@@ -119,7 +122,7 @@ async def isolated_database():
             text(
                 """
                 TRUNCATE TABLE reports, audit_logs, alert_matched_terms, slur_dictionary,
-                    system_settings, alerts, edge_devices, users
+                    system_settings, alerts, edge_devices, users, classrooms, schools
                 RESTART IDENTITY CASCADE
                 """
             )
@@ -129,6 +132,12 @@ async def isolated_database():
         )
 
     async with AsyncSessionLocal() as session:
+        school = School(name="Synthetic Test School")
+        session.add(school)
+        await session.flush()
+        classroom = Classroom(school_id=school.id, name="Synthetic Test Classroom")
+        session.add(classroom)
+        await session.flush()
         session.add(
             SystemSettings(
                 confidence_threshold=0.55,
@@ -142,8 +151,10 @@ async def isolated_database():
             EdgeDevice(
                 device_code=TEST_DEVICE_CODE,
                 display_name="Synthetic Test Device",
-                classroom_name="Synthetic Test Classroom",
-                school_name="Synthetic Test School",
+                school_id=school.id,
+                classroom_id=classroom.id,
+                legacy_classroom_name=classroom.name,
+                legacy_school_name=school.name,
                 api_key_hash=TEST_DEVICE_KEY_HASH,
             )
         )
@@ -155,11 +166,14 @@ async def isolated_database():
 @pytest_asyncio.fixture
 async def identities():
     async with AsyncSessionLocal() as session:
+        school = await session.scalar(select(School).where(School.name == "Synthetic Test School"))
         users = {
             role: User(
                 email=f"{role}@school.test",
                 hashed_password=pwd_context.hash(f"{role}-password"),
                 role=role,
+                school_id=school.id,
+                is_super_admin=role == "admin",
             )
             for role in ("admin", "staff", "counselor")
         }

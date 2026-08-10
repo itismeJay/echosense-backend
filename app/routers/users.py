@@ -14,7 +14,12 @@ from app.schemas.user import (
     RegisterRequest,
     UserOut,
 )
-from app.routers.auth import require_admin, get_current_user, pwd_context
+from app.routers.auth import (
+    get_current_user,
+    pwd_context,
+    require_admin,
+    resolve_new_user_scope,
+)
 from app.services.notification_recipients import resolve_notification_recipients
 from app.notifications.push import (
     PROVIDER_TEST_DATA_KEYS,
@@ -33,6 +38,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
+from app.services.school_access import is_global_admin
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -106,10 +112,13 @@ async def create_user(
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
+    school_id, is_super_admin = await resolve_new_user_scope(body, current_user, db)
     user = User(
         email=body.email,
         hashed_password=pwd_context.hash(body.password),
         role=body.role,
+        school_id=school_id,
+        is_super_admin=is_super_admin,
     )
     db.add(user)
     await db.flush()
@@ -124,19 +133,25 @@ async def create_user(
         target=user.email,
         description="Administrator created a user account.",
         metadata={"role": user.role},
+        school_id=user.school_id,
     )
     await db.commit()
     await db.refresh(user)
-    return UserOut(id=str(user.id), email=user.email, role=user.role)
+    return UserOut.model_validate(user)
 
 
 @router.get("/", response_model=List[UserOut])
 async def get_users(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
-    result = await db.execute(select(User))
-    return [UserOut(id=str(u.id), email=u.email, role=u.role) for u in result.scalars().all()]
+    query = select(User)
+    if not is_global_admin(current_user):
+        if current_user.school_id is None:
+            raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
+        query = query.where(User.school_id == current_user.school_id)
+    result = await db.execute(query)
+    return [UserOut.model_validate(user) for user in result.scalars().all()]
 
 
 @router.get(
@@ -251,6 +266,11 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if not is_global_admin(current_user):
+        if user.is_super_admin:
+            raise HTTPException(status_code=403, detail="Super-admin access required")
+        if current_user.school_id is None or user.school_id != current_user.school_id:
+            raise HTTPException(status_code=403, detail="School access denied")
     target_email = user.email
     target_role = user.role
     await db.delete(user)
@@ -265,5 +285,6 @@ async def delete_user(
         target=target_email,
         description="Administrator deleted a user account.",
         metadata={"role": target_role},
+        school_id=user.school_id,
     )
     await db.commit()

@@ -27,6 +27,7 @@ from app.notifications.push import send_expo_pushes
 from app.routers.auth import require_alert_reviewer
 from app.services.notification_recipients import resolve_notification_recipients
 from app.services.device_auth import authenticate_edge_device
+from app.services.school_access import is_global_admin, scope_alert_query
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
 
@@ -243,6 +244,12 @@ async def create_alert(
         validate_duplicate_alert(existing_alert, edge_device, request_fingerprint)
         return hydrate_alert(existing_alert)
 
+    classroom = edge_device.classroom
+    if classroom is None:
+        raise HTTPException(status_code=409, detail="Device is not assigned to a classroom")
+    if not classroom.is_active or not classroom.school.is_active:
+        raise HTTPException(status_code=409, detail="Device classroom is inactive")
+
     resolved_terms = await resolve_matched_terms(alert.matched_terms, db)
     duration = alert.duration
     if duration is None:
@@ -252,8 +259,10 @@ async def create_alert(
         schema_version=alert.schema_version,
         trigger_type=alert.trigger_type.value,
         edge_device_id=edge_device.id,
-        classroom_name_snapshot=edge_device.classroom_name,
-        school_name_snapshot=edge_device.school_name,
+        classroom_id=classroom.id,
+        school_id=classroom.school_id,
+        classroom_name_snapshot=classroom.name,
+        school_name_snapshot=classroom.school.name,
         severity=alert.severity.value,
         severity_reasons=alert.severity_reasons,
         review_message=alert.review_message,
@@ -292,7 +301,7 @@ async def create_alert(
         push_status="pending",
         confidence=legacy_confidence_value(alert),
         duration=duration,
-        location=edge_device.classroom_name,
+        location=classroom.name,
         transcribed_text=alert.transcribed_text,
         detected_words=json.dumps(alert.detected_words or []),
         yamnet_class=alert.yamnet_class,
@@ -335,7 +344,7 @@ async def create_alert(
     )
     new_alert = result.scalar_one()
 
-    recipients = await resolve_notification_recipients(db)
+    recipients = await resolve_notification_recipients(db, school_id=new_alert.school_id)
     if not recipients.controlled_test_mode or recipients.failure_reason is None:
         asyncio.create_task(
             send_expo_pushes(
@@ -360,9 +369,9 @@ async def create_alert(
 @router.get("/analytics/categories", response_model=AlertAnalyticsResponse)
 async def get_category_analytics(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_alert_reviewer),
+    current_user=Depends(require_alert_reviewer),
 ):
-    result = await db.execute(select(Alert))
+    result = await db.execute(scope_alert_query(select(Alert), current_user))
     alerts = result.scalars().all()
 
     by_category: dict = {}
@@ -443,13 +452,13 @@ def _period_stats(alerts: list) -> PeriodStats:
 @router.get("/analytics/summary", response_model=AlertSummaryResponse)
 async def get_summary_analytics(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_alert_reviewer),
+    current_user=Depends(require_alert_reviewer),
 ):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
 
-    all_result = await db.execute(select(Alert))
+    all_result = await db.execute(scope_alert_query(select(Alert), current_user))
     all_alerts = all_result.scalars().all()
 
     today_alerts = [
@@ -473,6 +482,9 @@ async def get_summary_analytics(
 @router.get("/", response_model=List[AlertResponse])
 async def get_alerts(
     event_id: UUID | None = None,
+    classroom_id: UUID | None = None,
+    school_id: UUID | None = None,
+    device_id: UUID | None = None,
     severity: Optional[str] = None,
     category: Optional[str] = None,
     language: Optional[LanguageCode] = None,
@@ -480,11 +492,24 @@ async def get_alerts(
     skip: int = Query(default=0, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_alert_reviewer),
+    current_user=Depends(require_alert_reviewer),
 ):
-    query = select(Alert).options(*alert_load_options()).order_by(Alert.created_at.desc())
+    query = scope_alert_query(select(Alert), current_user)
+    query = query.options(*alert_load_options()).order_by(Alert.created_at.desc())
     if event_id is not None:
         query = query.where(Alert.event_id == event_id)
+    if classroom_id is not None:
+        query = query.where(Alert.classroom_id == classroom_id)
+    if school_id is not None:
+        if (
+            not is_global_admin(current_user)
+            and current_user.school_id is not None
+            and school_id != current_user.school_id
+        ):
+            raise HTTPException(status_code=403, detail="School access denied")
+        query = query.where(Alert.school_id == school_id)
+    if device_id is not None:
+        query = query.where(Alert.edge_device_id == device_id)
     if severity:
         from app.schemas.alert import SeverityLevel
 
@@ -510,10 +535,12 @@ async def get_alerts(
 async def get_alert(
     alert_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_alert_reviewer),
+    current_user=Depends(require_alert_reviewer),
 ):
     result = await db.execute(
-        select(Alert).where(Alert.id == alert_id).options(*alert_load_options())
+        scope_alert_query(select(Alert), current_user)
+        .where(Alert.id == alert_id)
+        .options(*alert_load_options())
     )
     alert = result.scalar_one_or_none()
     if not alert:

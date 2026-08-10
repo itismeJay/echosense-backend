@@ -5,6 +5,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -111,6 +112,12 @@ class Alert(Base):
             name="ck_alerts_yamnet_evidence",
         ),
         UniqueConstraint("event_id", name="uq_alerts_event_id"),
+        ForeignKeyConstraint(
+            ["classroom_id", "school_id"],
+            ["classrooms.id", "classrooms.school_id"],
+            name="fk_alerts_classroom_school",
+            ondelete="RESTRICT",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -120,6 +127,13 @@ class Alert(Base):
     edge_device_id = Column(
         UUID(as_uuid=True),
         ForeignKey("edge_devices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    classroom_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    school_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )

@@ -2,9 +2,15 @@ import asyncio
 from passlib.context import CryptContext
 from sqlalchemy import select
 from app.database import engine, Base, AsyncSessionLocal
+import app.models.alert  # noqa: F401
+import app.models.classroom  # noqa: F401
+import app.models.edge_device  # noqa: F401
+import app.models.school  # noqa: F401
+import app.models.slur  # noqa: F401
 from app.models.user import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 async def seed():
     async with engine.begin() as conn:
@@ -20,9 +26,7 @@ async def seed():
 
     async with AsyncSessionLocal() as db:
         for user_data in users_to_create:
-            result = await db.execute(
-                select(User).where(User.email == user_data["email"])
-            )
+            result = await db.execute(select(User).where(User.email == user_data["email"]))
 
             if result.scalar_one_or_none():
                 print(f"{user_data['email']} already exists — skipping.")
@@ -32,12 +36,14 @@ async def seed():
                 email=user_data["email"],
                 hashed_password=pwd_context.hash(user_data["password"]),
                 role=user_data["role"],
+                is_super_admin=user_data["role"] == "admin",
             )
 
             db.add(user)
             print(f"Creating user: {user.email}")
 
         await db.commit()  # 🔑 commit once after all inserts
+
 
 if __name__ == "__main__":
     asyncio.run(seed())
