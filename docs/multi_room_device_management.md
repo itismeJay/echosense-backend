@@ -55,3 +55,51 @@ unknown school ownership remains fully unattributed. Fresh empty installations s
 School to be provisioned manually before classroom management begins. Downgrading after valid
 unassigned devices have been provisioned retains the known legacy nullability limitation; this
 does not affect forward migration or normal Multi-Room operation.
+
+## Development user seeding
+
+`seed_users.py` creates one development user per invocation. The operator must explicitly supply
+`ECHOSENSE_SEED_USER_PASSWORD` and either `--email` or `ECHOSENSE_SEED_USER_EMAIL`; the helper has
+no credential defaults and never prints the plaintext password. The role defaults to `admin` with
+`is_super_admin=false`, not a global administrator. Associate that account with an explicitly
+provisioned school before using it for normal school administration. Run the helper again with
+different explicit inputs to create additional development users.
+
+A fresh installation that deliberately needs a bootstrap global administrator may use
+`--role admin --super-admin`. The flag is rejected for non-admin roles. Store seed inputs in an
+untracked local environment or secret manager, never in source control or shell scripts. The
+bootstrap account must be reviewed and replaced or reduced to the intended long-term access after
+initial provisioning.
+
+## Required production account audit before revision 20260810_0009
+
+Revision `20260810_0009` intentionally preserves compatibility by marking pre-existing
+administrators as super-admins. Before running the migration, an authorized operator must use the
+production database's read-only SQL console to inspect the current revision and administrator
+identities:
+
+```sql
+SELECT version_num FROM alembic_version;
+
+SELECT id, email, role
+FROM users
+WHERE lower(role) = 'admin'
+ORDER BY id;
+```
+
+Compare every returned identity with the approved production administrator roster and the known
+historical development-seed identities. Do not select or export `hashed_password`, push tokens,
+device credentials, or authentication tokens. Any development-derived, unknown, or unnecessary
+account must be removed, disabled, or have its credentials rotated through a separately approved
+production procedure before migration. This audit is a mandatory gate; it does not automate any
+account mutation.
+
+If the database is already at or beyond revision `20260810_0009`, inspect the resulting privilege
+state as well:
+
+```sql
+SELECT id, email, role, is_super_admin
+FROM users
+WHERE lower(role) = 'admin' OR is_super_admin IS TRUE
+ORDER BY id;
+```
