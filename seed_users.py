@@ -6,6 +6,7 @@ from app.models.user import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
 async def seed():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -20,9 +21,7 @@ async def seed():
 
     async with AsyncSessionLocal() as db:
         for user_data in users_to_create:
-            result = await db.execute(
-                select(User).where(User.email == user_data["email"])
-            )
+            result = await db.execute(select(User).where(User.email == user_data["email"]))
 
             if result.scalar_one_or_none():
                 print(f"{user_data['email']} already exists — skipping.")
@@ -39,5 +38,33 @@ async def seed():
 
         await db.commit()  # 🔑 commit once after all inserts
 
+
 if __name__ == "__main__":
     asyncio.run(seed())
+
+
+# curl http://127.0.0.1:8000/health
+# cd ~/echosense-backend
+# ./scripts/send_alert.sh HIGH KEYWORD "pangit ka"
+
+
+
+# Terminal 1:
+# cd ~/echosense-backend
+# ./scripts/dev_integration.sh
+
+# Terminal 2:
+# curl http://127.0.0.1:8000/health
+
+# Terminal 2:
+# cd ~/echosense-backend
+ ./scripts/send_alert.sh HIGH KEYWORD "pangit ka"
+
+
+
+# cd ~/echosense-backend
+ ./scripts/send_alert.sh MEDIUM KEYWORD "pangit ka"
+
+
+# cd ~/echosense-backend
+ ./scripts/send_alert.sh LOW KEYWORD "pangit ka"
