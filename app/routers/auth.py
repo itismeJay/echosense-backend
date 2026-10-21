@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from passlib.context import CryptContext
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.models.school import School
 from app.schemas.user import LoginRequest, RegisterRequest, TokenResponse, UserOut
 from app.services.audit import (
     AuditAction,
@@ -15,6 +17,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
+from app.services.school_access import is_global_admin
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -22,6 +25,26 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 ALERT_REVIEWER_ROLES = frozenset({"admin", "staff", "counselor"})
+
+
+async def resolve_new_user_scope(
+    body: RegisterRequest,
+    current_user: User,
+    db: AsyncSession,
+) -> tuple[UUID | None, bool]:
+    if body.is_super_admin and not is_global_admin(current_user):
+        raise HTTPException(status_code=403, detail="Super-admin access required")
+    if is_global_admin(current_user):
+        school_id = body.school_id
+    else:
+        if current_user.school_id is None:
+            raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
+        if body.school_id is not None and body.school_id != current_user.school_id:
+            raise HTTPException(status_code=403, detail="School access denied")
+        school_id = current_user.school_id
+    if school_id is not None and await db.get(School, school_id) is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    return school_id, body.is_super_admin
 
 
 def create_token(user: User) -> str:
@@ -134,13 +157,13 @@ async def login(
     await db.commit()
     return TokenResponse(
         access_token=access_token,
-        user=UserOut(id=str(user.id), email=user.email, role=user.role),
+        user=UserOut.model_validate(user),
     )
 
 
 @router.get("/me", response_model=UserOut)
 async def me(current_user: User = Depends(get_current_user)):
-    return UserOut(id=str(current_user.id), email=current_user.email, role=current_user.role)
+    return UserOut.model_validate(current_user)
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
@@ -154,10 +177,14 @@ async def register(
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
 
+    school_id, is_super_admin = await resolve_new_user_scope(body, current_user, db)
+
     user = User(
         email=body.email,
         hashed_password=pwd_context.hash(body.password),
         role=body.role,
+        school_id=school_id,
+        is_super_admin=is_super_admin,
     )
     db.add(user)
     await db.flush()
@@ -172,7 +199,8 @@ async def register(
         target=user.email,
         description="Administrator created a user account.",
         metadata={"role": user.role},
+        school_id=user.school_id,
     )
     await db.commit()
     await db.refresh(user)
-    return UserOut(id=str(user.id), email=user.email, role=user.role)
+    return UserOut.model_validate(user)

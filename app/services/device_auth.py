@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.database import get_db
 from app.models.edge_device import EdgeDevice
@@ -44,7 +45,9 @@ async def authenticate_edge_device(
         raise _credential_error()
 
     result = await db.execute(
-        select(EdgeDevice).where(EdgeDevice.device_code == device_code.strip())
+        select(EdgeDevice)
+        .where(EdgeDevice.device_code == device_code.strip())
+        .options(joinedload(EdgeDevice.classroom), joinedload(EdgeDevice.school))
     )
     device = result.scalar_one_or_none()
     if device is None:

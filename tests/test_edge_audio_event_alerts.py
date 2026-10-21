@@ -212,7 +212,7 @@ async def test_old_alert_with_null_edge_evidence_serializes_in_list_and_detail(
         await session.refresh(alert)
         alert_id = alert.id
 
-    headers = auth_headers(identities["staff"])
+    headers = auth_headers(identities["admin"])
     listed = await client.get("/alerts/", headers=headers)
     detail = await client.get(f"/alerts/{alert_id}", headers=headers)
 

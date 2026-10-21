@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
+from app.models.edge_device import EdgeDevice
 from app.notifications.push import (
     CLASSROOM_ALERT_DATA_KEYS,
     NOTIFICATION_TEMPLATES,
@@ -507,12 +508,14 @@ async def test_push_provider_failure_leaves_committed_alert_stored(
     async with AsyncSessionLocal() as session:
         from app.models.user import User
 
+        school_id = await session.scalar(select(EdgeDevice.school_id).limit(1))
         session.add(
             User(
                 email="push-failure@example.test",
                 hashed_password="synthetic",
                 role="staff",
                 push_token="ExpoPushToken[synthetic-token]",
+                school_id=school_id,
             )
         )
         await session.commit()

@@ -9,6 +9,7 @@ from sqlalchemy import (
     String,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -27,6 +28,7 @@ class AuditLog(Base):
         Index("ix_audit_logs_action", "action"),
         Index("ix_audit_logs_resource", "resource"),
         Index("ix_audit_logs_status", "status"),
+        Index("ix_audit_logs_school_id", "school_id"),
     )
 
     # Keep the existing database primary-key column so legacy rows retain IDs.
@@ -43,6 +45,11 @@ class AuditLog(Base):
     )
     actor_email = Column(String(320), nullable=True)
     actor_role = Column(String(50), nullable=True)
+    school_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     action = Column(String(100), nullable=False)
     resource = Column(String(100), nullable=False)
     resource_id = Column(String(100), nullable=True)

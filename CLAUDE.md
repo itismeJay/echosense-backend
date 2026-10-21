@@ -15,9 +15,9 @@ uvicorn app.main:app --reload
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
-Do not run `seed_users.py` outside a disposable local environment; it contains
-predictable development-only credentials. Tests use pytest and Ruff is configured
-in `pyproject.toml`.
+Do not run `seed_users.py` outside a disposable local environment. It requires explicit
+operator-provided credentials and makes super-admin access opt-in. Tests use pytest and Ruff is
+configured in `pyproject.toml`.
 
 ## Environment
 

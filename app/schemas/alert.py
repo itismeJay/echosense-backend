@@ -483,6 +483,8 @@ class AlertResponse(BaseModel):
     device_id: Optional[UUID] = None
     device_code: Optional[str] = None
     device_display_name: Optional[str] = None
+    classroom_id: Optional[UUID] = None
+    school_id: Optional[UUID] = None
     classroom_name: Optional[str] = None
     school_name: Optional[str] = None
     severity: str

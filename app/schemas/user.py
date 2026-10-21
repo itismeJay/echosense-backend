@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -10,18 +11,32 @@ class LoginRequest(BaseModel):
 
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     role: str
+    school_id: UUID | None = None
+    is_super_admin: bool = False
 
-    class Config:
-        from_attributes = True
+    @field_validator("id", mode="before")
+    @classmethod
+    def stringify_id(cls, value) -> str:
+        return str(value)
 
 
 class RegisterRequest(BaseModel):
     email: str
     password: str
     role: Literal["admin", "staff", "counselor"] = "staff"
+    school_id: UUID | None = None
+    is_super_admin: bool = False
+
+    @model_validator(mode="after")
+    def validate_super_admin_role(self):
+        if self.is_super_admin and self.role != "admin":
+            raise ValueError("is_super_admin requires role=admin")
+        return self
 
 
 class TokenResponse(BaseModel):
