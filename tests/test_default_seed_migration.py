@@ -94,7 +94,7 @@ async def test_seed_preserves_existing_settings_and_terms():
         by_normalized.setdefault(normalize_term(entry.slur_text), []).append(entry)
 
     assert len(settings_rows) == 1
-    assert settings_rows[0].vosk_version == "local-test"
+    assert settings_rows[0].stt_model_version == "local-test"
     assert all(len(matches) == 1 for matches in by_normalized.values())
     assert by_normalized["bobo"][0].severity_weight == 0.1
     assert by_normalized["custom admin term"][0].severity_weight == 0.3

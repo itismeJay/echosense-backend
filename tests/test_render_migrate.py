@@ -777,3 +777,71 @@ def test_multi_room_backfill_keeps_known_school_without_guessing_classroom(
     ]
     assert device_rows == expected_devices
     assert alert_rows == expected_alerts
+
+
+VOSK_DEFAULT = "vosk-model-small-en-us-0.15"
+FASTER_WHISPER_DEFAULT = "faster-whisper small int8"
+
+
+def _settings_columns(database_url: str) -> set[str]:
+    engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
+    with engine.connect() as connection:
+        columns = {
+            column["name"] for column in sa.inspect(connection).get_columns("system_settings")
+        }
+    engine.dispose()
+    return columns
+
+
+def _stt_values(database_url: str, column: str) -> list[str]:
+    engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
+    with engine.connect() as connection:
+        values = connection.execute(
+            sa.text(f"SELECT {column} FROM system_settings ORDER BY setting_id")
+        ).scalars()
+        result = list(values)
+    engine.dispose()
+    return result
+
+
+def test_fresh_database_ends_with_stt_model_version(disposable_database, monkeypatch):
+    _upgrade_to(disposable_database, "head", monkeypatch)
+
+    columns = _settings_columns(disposable_database)
+
+    assert "stt_model_version" in columns and "vosk_version" not in columns
+    assert _stt_values(disposable_database, "stt_model_version") == [FASTER_WHISPER_DEFAULT]
+
+
+def test_rename_replaces_only_the_old_default_and_downgrade_reverses_it(
+    disposable_database, monkeypatch
+):
+    _upgrade_to(disposable_database, "20261021_0011", monkeypatch)
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text("UPDATE system_settings SET vosk_version = :value"), {"value": VOSK_DEFAULT}
+        )
+        connection.execute(
+            sa.text("INSERT INTO system_settings (vosk_version) VALUES ('admin-custom-model')")
+        )
+    engine.dispose()
+
+    _upgrade_to(disposable_database, "20261021_0012", monkeypatch)
+    assert _stt_values(disposable_database, "stt_model_version") == [
+        FASTER_WHISPER_DEFAULT,
+        "admin-custom-model",
+    ]
+
+    _downgrade_to(disposable_database, "20261021_0011", monkeypatch)
+    assert "stt_model_version" not in _settings_columns(disposable_database)
+    assert _stt_values(disposable_database, "vosk_version") == [
+        VOSK_DEFAULT,
+        "admin-custom-model",
+    ]
+
+    _upgrade_to(disposable_database, "20261021_0012", monkeypatch)
+    assert _stt_values(disposable_database, "stt_model_version") == [
+        FASTER_WHISPER_DEFAULT,
+        "admin-custom-model",
+    ]

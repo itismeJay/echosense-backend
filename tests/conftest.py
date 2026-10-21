@@ -143,7 +143,7 @@ async def isolated_database():
                 confidence_threshold=0.55,
                 aggression_duration_threshold=2.0,
                 device_status="offline",
-                vosk_version="local-test",
+                stt_model_version="local-test",
                 yamnet_version="local-test",
             )
         )

@@ -32,14 +32,16 @@ branch_labels = None
 depends_on = None
 
 # Same values as app.main.SYSTEM_SETTINGS_SEED, frozen here so later code edits cannot
-# change what this revision does.
+# change what this revision does. The speech-to-text column is vosk_version at this
+# revision and stt_model_version from 20261021_0012 on; seed() fills whichever exists so
+# the function also works against a database at head.
 SYSTEM_SETTINGS_SEED = """
 INSERT INTO system_settings (
   confidence_threshold, aggression_duration_threshold,
-  device_status, vosk_version, yamnet_version
+  device_status, {stt_column}, yamnet_version
 )
 SELECT 0.55, 2.0, 'offline',
-       'vosk-model-small-en-us-0.15', 'YAMNet TFLite v1.0'
+       'faster-whisper small int8', 'YAMNet TFLite v1.0'
 WHERE NOT EXISTS (SELECT 1 FROM system_settings)
 """
 
@@ -631,8 +633,13 @@ def _term_params(terms) -> list[dict]:
     ]
 
 
+def _stt_column(connection) -> str:
+    columns = {column["name"] for column in sa.inspect(connection).get_columns("system_settings")}
+    return "stt_model_version" if "stt_model_version" in columns else "vosk_version"
+
+
 def seed(connection) -> None:
-    connection.execute(sa.text(SYSTEM_SETTINGS_SEED))
+    connection.execute(sa.text(SYSTEM_SETTINGS_SEED.format(stt_column=_stt_column(connection))))
     connection.execute(sa.text(TERM_INSERT), _term_params(LEGACY_TERMS + EDGE_TERMS))
 
 

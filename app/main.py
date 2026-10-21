@@ -60,7 +60,7 @@ ALERT_COLUMN_MIGRATIONS = [
 SYSTEM_SETTINGS_COLUMN_MIGRATIONS = [
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS device_status VARCHAR(20) DEFAULT 'offline'",
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP",
-    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS vosk_version VARCHAR(50) DEFAULT 'vosk-model-small-en-us-0.15'",
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS stt_model_version VARCHAR(50) DEFAULT 'faster-whisper small int8'",
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS yamnet_version VARCHAR(50) DEFAULT 'YAMNet TFLite v1.0'",
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS last_ota_update TIMESTAMP",
 ]
@@ -90,10 +90,10 @@ ON CONFLICT (slur_text) DO NOTHING
 SYSTEM_SETTINGS_SEED = """
 INSERT INTO system_settings (
   confidence_threshold, aggression_duration_threshold,
-  device_status, vosk_version, yamnet_version
+  device_status, stt_model_version, yamnet_version
 )
 SELECT 0.55, 2.0, 'offline',
-       'vosk-model-small-en-us-0.15', 'YAMNet TFLite v1.0'
+       'faster-whisper small int8', 'YAMNet TFLite v1.0'
 WHERE NOT EXISTS (SELECT 1 FROM system_settings)
 """
 
