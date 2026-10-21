@@ -216,6 +216,8 @@ def upgrade() -> None:
           AND users.school_id IS NOT NULL
         """
     )
+    # The append-only trigger from 0003 blocks this one-time schema backfill; re-enabled below.
+    op.execute("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_prevent_mutation")
     op.execute(
         """
         UPDATE audit_logs
@@ -225,6 +227,7 @@ def upgrade() -> None:
           AND users.school_id IS NOT NULL
         """
     )
+    op.execute("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_prevent_mutation")
 
     op.create_index("ix_edge_devices_school_id", "edge_devices", ["school_id"], unique=False)
     op.create_index("ix_edge_devices_classroom_id", "edge_devices", ["classroom_id"], unique=False)
