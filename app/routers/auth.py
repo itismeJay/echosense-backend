@@ -103,6 +103,28 @@ async def require_admin(
     return current_user
 
 
+async def require_super_admin(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if not is_global_admin(current_user):
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.PERMISSION_DENIED,
+            AuditResource.SECURITY,
+            AuditStatus.FAILURE,
+            actor=current_user,
+            target=request.url.path,
+            description="User was denied access to a super-admin operation.",
+            metadata={"method": request.method},
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail="Super-admin access required")
+    return current_user
+
+
 async def require_alert_reviewer(
     request: Request,
     current_user: User = Depends(get_current_user),

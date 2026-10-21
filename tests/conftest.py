@@ -239,3 +239,52 @@ async def edge_device_identity():
 
 def auth_headers(identity: dict) -> dict[str, str]:
     return {"Authorization": f"Bearer {identity['token']}"}
+
+
+@pytest_asyncio.fixture
+async def org_identities():
+    """A school-less super admin plus admin/staff/counselor accounts in schools A and B."""
+
+    async with AsyncSessionLocal() as session:
+        school_a = await session.scalar(
+            select(School).where(School.name == "Synthetic Test School")
+        )
+        school_b = School(name="Synthetic Second School")
+        session.add(school_b)
+        await session.flush()
+        specs = {
+            "super": ("admin", None, True),
+            "admin_a": ("admin", school_a.id, False),
+            "staff_a": ("staff", school_a.id, False),
+            "counselor_a": ("counselor", school_a.id, False),
+            "admin_b": ("admin", school_b.id, False),
+            "staff_b": ("staff", school_b.id, False),
+        }
+        users = {
+            key: User(
+                email=f"{key}@org.test",
+                hashed_password=pwd_context.hash(f"{key}-password"),
+                role=role,
+                school_id=school_id,
+                is_super_admin=is_super_admin,
+            )
+            for key, (role, school_id, is_super_admin) in specs.items()
+        }
+        session.add_all(users.values())
+        await session.commit()
+        for user in users.values():
+            await session.refresh(user)
+
+        identities = {
+            key: {
+                "id": user.id,
+                "email": user.email,
+                "password": f"{key}-password",
+                "school_id": user.school_id,
+                "token": create_token(user),
+            }
+            for key, user in users.items()
+        }
+        identities["school_a_id"] = school_a.id
+        identities["school_b_id"] = school_b.id
+        return identities

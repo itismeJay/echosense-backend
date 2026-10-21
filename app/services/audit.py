@@ -38,6 +38,8 @@ class AuditAction(str, Enum):
     ROTATE_EDGE_DEVICE_KEY = "ROTATE_EDGE_DEVICE_KEY"
     CREATE_CLASSROOM = "CREATE_CLASSROOM"
     UPDATE_CLASSROOM = "UPDATE_CLASSROOM"
+    CREATE_SCHOOL = "CREATE_SCHOOL"
+    UPDATE_SCHOOL = "UPDATE_SCHOOL"
     PERMISSION_DENIED = "PERMISSION_DENIED"
 
 
@@ -50,6 +52,7 @@ class AuditResource(str, Enum):
     AUDIT_LOG = "AuditLog"
     EDGE_DEVICE = "EdgeDevice"
     CLASSROOM = "Classroom"
+    SCHOOL = "School"
     SECURITY = "Security"
 
 

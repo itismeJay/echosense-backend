@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
-from app.routers import classrooms, devices
+from app.routers import classrooms, devices, schools
 from app.routers import dictionary, system_settings, audit_logs, reports
 from app.routers import system_logs
 from app.config import CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS, settings
@@ -130,6 +130,7 @@ app.include_router(reports.router)
 app.include_router(system_logs.router)
 app.include_router(devices.router)
 app.include_router(classrooms.router)
+app.include_router(schools.router)
 
 
 def required_ingest_header_openapi():
