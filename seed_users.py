@@ -15,7 +15,6 @@ ALLOWED_ROLES = ("admin", "staff", "counselor")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-
 class SeedConfigurationError(ValueError):
     """Raised before database access when explicit seed credentials are missing."""
 
@@ -90,19 +89,17 @@ async def seed(config: SeedUserConfig) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
-        for user_data in users_to_create:
-            result = await db.execute(
-                select(User).where(User.email == user_data["email"])
-            )
+        result = await db.execute(select(User).where(User.email == config.email))
+        if result.scalar_one_or_none():
+            print(f"{config.email} already exists — skipping.")
+            return
 
-            if result.scalar_one_or_none():
-                print(f"{user_data['email']} already exists — skipping.")
-                continue  # 🔑 don't stop everything, just skip this one
-
-            user = User(
-                email=user_data["email"],
-                hashed_password=pwd_context.hash(user_data["password"]),
-                role=user_data["role"],
+        db.add(
+            User(
+                email=config.email,
+                hashed_password=pwd_context.hash(config.password),
+                role=config.role,
+                is_super_admin=config.is_super_admin,
             )
         )
         await db.commit()
@@ -122,6 +119,5 @@ def main(
     return 0
 
 
-
 if __name__ == "__main__":
-    asyncio.run(seed())
+    raise SystemExit(main())
