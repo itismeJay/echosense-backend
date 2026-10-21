@@ -32,3 +32,11 @@ async def test_logs_list_loads_matched_terms_without_lazy_loading(client, identi
 
     assert response.status_code == 200
     assert response.json()[0]["matched_terms"][0]["term"] == "example phrase"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["skip=-1", "limit=-1", "limit=0", "limit=100000"])
+async def test_logs_list_rejects_out_of_range_pagination(client, identities, query):
+    response = await client.get(f"/logs/?{query}", headers=auth_headers(identities["staff"]))
+
+    assert response.status_code == 422

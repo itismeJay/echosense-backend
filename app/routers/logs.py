@@ -1,6 +1,6 @@
 import json
 from collections import Counter
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.database import get_db
@@ -19,8 +19,8 @@ EMOTION_BUCKETS = ["angry", "aggressive", "distressed", "upset", "neutral", "unk
 
 @router.get("/", response_model=List[AlertResponse])
 async def get_logs(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_alert_reviewer),
 ):
