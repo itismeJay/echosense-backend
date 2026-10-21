@@ -132,4 +132,3 @@ async def ota_push(
         )
         await db.commit()
     return {"message": "OTA push triggered"}
-

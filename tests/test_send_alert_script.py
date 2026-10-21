@@ -246,7 +246,5 @@ def test_missing_credentials_stops_before_submission(tmp_path, monkeypatch):
     assert post.calls == []
 
 
-
-
 # cd ~/echosense-backend
 # ./scripts/send_alert.sh HIGH KEYWORD "pangit ka"
