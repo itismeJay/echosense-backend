@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
+from uuid import UUID
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import (
@@ -55,6 +56,16 @@ def _mask_email(email: str | None) -> str | None:
     else:
         masked_local = f"{local[0]}***{local[-1]}"
     return f"{masked_local}@{domain}"
+
+
+def _diagnostic_school_scope(current_user: User) -> UUID | None:
+    """Super admins diagnose every school; school admins only their own recipients."""
+
+    if is_global_admin(current_user):
+        return None
+    if current_user.school_id is None:
+        raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
+    return current_user.school_id
 
 
 def _recipient_internal_id(user_id: int | None) -> str | None:
@@ -133,9 +144,13 @@ async def get_users(
 )
 async def audit_notification_recipient(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
-    selection = await resolve_notification_recipients(db, emit_log=False)
+    selection = await resolve_notification_recipients(
+        db,
+        school_id=_diagnostic_school_scope(current_user),
+        emit_log=False,
+    )
     audit = _notification_recipient_audit(selection)
     if selection.controlled_test_mode and (
         selection.failure_reason is not None or selection.eligible_recipient_count != 1
@@ -151,9 +166,13 @@ async def audit_notification_recipient(
 async def dry_run_provider_test(
     body: ProviderTestDryRunRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
-    selection = await resolve_notification_recipients(db, emit_log=False)
+    selection = await resolve_notification_recipients(
+        db,
+        school_id=_diagnostic_school_scope(current_user),
+        emit_log=False,
+    )
     try:
         test_id = create_provider_test_dry_run(
             selection,
@@ -193,9 +212,13 @@ async def dry_run_provider_test(
 async def send_provider_test(
     body: ProviderTestSendRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
-    selection = await resolve_notification_recipients(db, emit_log=False)
+    selection = await resolve_notification_recipients(
+        db,
+        school_id=_diagnostic_school_scope(current_user),
+        emit_log=False,
+    )
     try:
         token = consume_provider_test_dry_run(
             selection,
