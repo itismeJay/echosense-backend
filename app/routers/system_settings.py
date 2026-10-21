@@ -6,7 +6,7 @@ from app.database import get_db
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.schemas.system_settings import SystemSettingsOut, SystemSettingsUpdate
-from app.routers.auth import require_admin
+from app.routers.auth import require_admin, require_super_admin
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -40,7 +40,7 @@ async def update_settings(
     request: Request,
     body: SystemSettingsUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
 ):
     row = await _get_row(db)
     if not row:
@@ -114,7 +114,7 @@ async def get_heartbeat(db: AsyncSession = Depends(get_db)):
 async def ota_push(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
 ):
     row = await _get_row(db)
     if row:

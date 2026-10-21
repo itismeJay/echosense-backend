@@ -8,7 +8,7 @@ from app.models.user import User
 from app.schemas.dictionary import SlurEntry, SlurCreate
 from app.schemas.alert import normalize_term
 from app.models.alert import AlertMatchedTerm
-from app.routers.auth import require_admin
+from app.routers.auth import require_super_admin
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -32,7 +32,7 @@ async def add_slur(
     request: Request,
     body: SlurCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
 ):
     normalized_text = normalize_term(body.slur_text)
     existing = await db.execute(select(SlurModel))
@@ -73,7 +73,7 @@ async def delete_slur(
     request: Request,
     term_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
 ):
     result = await db.execute(select(SlurModel).where(SlurModel.term_id == term_id))
     entry = result.scalar_one_or_none()
