@@ -44,6 +44,7 @@ class UserOut(BaseModel):
     role: str
     school_id: UUID | None = None
     is_super_admin: bool = False
+    must_change_password: bool = False
 
     @field_validator("id", mode="before")
     @classmethod
@@ -81,7 +82,24 @@ class RegisterRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
     user: UserOut
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_new_password(value)
+
+    @model_validator(mode="after")
+    def require_different_password(self):
+        if self.new_password == self.current_password:
+            raise ValueError("new_password must differ from current_password")
+        return self
 
 
 class PushTokenRequest(BaseModel):

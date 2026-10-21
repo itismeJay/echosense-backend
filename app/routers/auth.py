@@ -11,7 +11,13 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.school import School
-from app.schemas.user import LoginRequest, RegisterRequest, TokenResponse, UserOut
+from app.schemas.user import (
+    ChangePasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserOut,
+)
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -26,6 +32,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 ALERT_REVIEWER_ROLES = frozenset({"admin", "staff", "counselor"})
+PASSWORD_CHANGE_REQUIRED = "password_change_required"
 
 
 async def resolve_new_user_scope(
@@ -89,6 +96,7 @@ async def create_user_account(
         role=body.role,
         school_id=school_id,
         is_super_admin=is_super_admin,
+        must_change_password=True,
     )
     db.add(user)
     try:
@@ -131,10 +139,12 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-async def get_current_user(
+async def get_authenticated_user(
     authorization: Optional[str] = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """Resolve the bearer token without account-state gates; only for exempt routes."""
+
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid token")
     payload = decode_token(authorization.removeprefix("Bearer "))
@@ -145,6 +155,12 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")
+    return user
+
+
+async def get_current_user(user: User = Depends(get_authenticated_user)) -> User:
+    if user.must_change_password:
+        raise HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
     return user
 
 
@@ -248,12 +264,53 @@ async def login(
     await db.commit()
     return TokenResponse(
         access_token=access_token,
+        must_change_password=user.must_change_password,
         user=UserOut.model_validate(user),
     )
 
 
 @router.get("/me", response_model=UserOut)
-async def me(current_user: User = Depends(get_current_user)):
+async def me(current_user: User = Depends(get_authenticated_user)):
+    # Exempt from the password-change gate so clients can render the change form.
+    return UserOut.model_validate(current_user)
+
+
+@router.post("/change-password", response_model=UserOut)
+async def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_authenticated_user),
+):
+    if not pwd_context.verify(body.current_password, current_user.hashed_password):
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.CHANGE_PASSWORD_FAILED,
+            AuditResource.AUTHENTICATION,
+            AuditStatus.FAILURE,
+            actor=current_user,
+            description="Password change rejected: current password did not match.",
+        )
+        await db.commit()
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    was_temporary = current_user.must_change_password
+    current_user.hashed_password = pwd_context.hash(body.new_password)
+    current_user.must_change_password = False
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.CHANGE_PASSWORD,
+        AuditResource.AUTHENTICATION,
+        AuditStatus.SUCCESS,
+        actor=current_user,
+        resource_id=current_user.id,
+        description="User changed their password.",
+        metadata={"was_temporary": was_temporary},
+    )
+    await db.commit()
+    await db.refresh(current_user)
     return UserOut.model_validate(current_user)
 
 

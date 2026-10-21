@@ -20,5 +20,6 @@ class User(Base):
         index=True,
     )
     is_super_admin = Column(Boolean, nullable=False, default=False, server_default="false")
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default="false")
 
     school = relationship("School", back_populates="users", lazy="joined")
