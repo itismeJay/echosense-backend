@@ -229,26 +229,29 @@ def test_existing_alerts_and_dictionary_remain_readable_after_migration(
                 """
             )
         ).all()
-        dictionary_languages = (
-            connection.execute(
-                sa.text(
-                    """
-                SELECT language
+        dictionary_rows = connection.execute(
+            sa.text(
+                """
+                SELECT slur_text, language
                 FROM slur_dictionary
                 ORDER BY term_id
                 """
-                )
             )
-            .scalars()
-            .all()
-        )
+        ).all()
     engine.dispose()
 
     assert alerts == [
         ("MEDIUM", "unknown", None),
         ("HIGH", "ceb", None),
     ]
-    assert dictionary_languages == ["fil", "ceb", "en"]
+    # Pre-existing terms survive with normalized languages; revision 0011 then appends
+    # the default dictionary after them without touching them.
+    assert dictionary_rows[:3] == [
+        ("legacy-fil", "fil"),
+        ("legacy-ceb", "ceb"),
+        ("legacy-en", "en"),
+    ]
+    assert len(dictionary_rows) == 3 + 549
 
 
 def test_edge_audio_event_migration_upgrades_downgrades_and_upgrades_again(

@@ -15,7 +15,7 @@ load_dotenv(REPOSITORY_ROOT / ".env.integration", override=True)
 from app.database import engine  # noqa: E402
 from scripts.integration_safety import validate_integration_environment  # noqa: E402
 
-EXPECTED_MIGRATION = "20260810_0009"
+EXPECTED_MIGRATION = "20261021_0011"
 REQUIRED_TABLES = frozenset({"alerts", "edge_devices", "users"})
 REQUIRED_ALERT_COLUMNS = frozenset(
     {
