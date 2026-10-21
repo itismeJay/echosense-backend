@@ -100,7 +100,11 @@ async def test_collection_post_routes_answer_without_redirect(client, identities
     )
     user = await client.post(
         "/users" + suffix,
-        json={"email": f"slash{len(suffix)}@school.test", "password": "long-enough-password"},
+        json={
+            "email": f"slash{len(suffix)}@school.test",
+            "password": "long-enough-password",
+            "school_id": str(identities["admin"]["school_id"]),
+        },
         headers=headers,
     )
 

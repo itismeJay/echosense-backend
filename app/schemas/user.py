@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -5,9 +6,34 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+# Deliberately simple: one "@", no whitespace, and a dotted domain. EmailStr is not used
+# because email-validator rejects the special-use .local/.test domains used locally.
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]+$")
+PASSWORD_MIN_LENGTH = 8
+# bcrypt only hashes the first 72 bytes and newer releases reject longer input.
+PASSWORD_MAX_BYTES = 72
+
+
+def normalize_email(value: str) -> str:
+    return value.strip().lower()
+
+
+def validate_new_password(value: str) -> str:
+    if len(value) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"password must be at least {PASSWORD_MIN_LENGTH} characters")
+    if len(value.encode("utf-8")) > PASSWORD_MAX_BYTES:
+        raise ValueError(f"password must be at most {PASSWORD_MAX_BYTES} bytes")
+    return value
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def strip_email(cls, value: str) -> str:
+        return value.strip()
 
 
 class UserOut(BaseModel):
@@ -26,11 +52,24 @@ class UserOut(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    email: str
+    email: str = Field(max_length=254)
     password: str
     role: Literal["admin", "staff", "counselor"] = "staff"
     school_id: UUID | None = None
     is_super_admin: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = normalize_email(value)
+        if not EMAIL_PATTERN.fullmatch(normalized):
+            raise ValueError("email must be a valid email address")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_new_password(value)
 
     @model_validator(mode="after")
     def validate_super_admin_role(self):

@@ -3,7 +3,8 @@ from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from app.config import settings
@@ -36,15 +37,81 @@ async def resolve_new_user_scope(
         raise HTTPException(status_code=403, detail="Super-admin access required")
     if is_global_admin(current_user):
         school_id = body.school_id
+        if school_id is None and not body.is_super_admin:
+            raise HTTPException(
+                status_code=422,
+                detail="school_id is required for users who are not super admins",
+            )
     else:
         if current_user.school_id is None:
             raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
         if body.school_id is not None and body.school_id != current_user.school_id:
             raise HTTPException(status_code=403, detail="School access denied")
         school_id = current_user.school_id
-    if school_id is not None and await db.get(School, school_id) is None:
-        raise HTTPException(status_code=404, detail="School not found")
+    if school_id is not None:
+        school = await db.get(School, school_id)
+        if school is None:
+            raise HTTPException(status_code=404, detail="School not found")
+        if not school.is_active:
+            raise HTTPException(status_code=409, detail="School is inactive")
     return school_id, body.is_super_admin
+
+
+async def find_user_by_email(db: AsyncSession, email: str) -> User | None:
+    """Exact match first, then a case-insensitive match only when it is unambiguous."""
+
+    exact = await db.execute(select(User).where(User.email == email))
+    user = exact.scalar_one_or_none()
+    if user is not None:
+        return user
+    folded = await db.execute(select(User).where(func.lower(User.email) == email.lower()).limit(2))
+    matches = folded.scalars().all()
+    return matches[0] if len(matches) == 1 else None
+
+
+async def create_user_account(
+    request: Request,
+    body: RegisterRequest,
+    db: AsyncSession,
+    current_user: User,
+) -> UserOut:
+    existing = await db.execute(
+        select(User.id).where(func.lower(User.email) == body.email).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    school_id, is_super_admin = await resolve_new_user_scope(body, current_user, db)
+
+    user = User(
+        email=body.email,
+        hashed_password=pwd_context.hash(body.password),
+        role=body.role,
+        school_id=school_id,
+        is_super_admin=is_super_admin,
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Email already registered") from exc
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.CREATE_USER,
+        AuditResource.USER,
+        AuditStatus.SUCCESS,
+        actor=current_user,
+        resource_id=user.id,
+        target=user.email,
+        description="Administrator created a user account.",
+        metadata={"role": user.role},
+        school_id=user.school_id,
+    )
+    await db.commit()
+    await db.refresh(user)
+    return UserOut.model_validate(user)
 
 
 def create_token(user: User) -> str:
@@ -153,8 +220,7 @@ async def login(
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).where(User.email == body.email))
-    user = result.scalar_one_or_none()
+    user = await find_user_by_email(db, body.email)
 
     if not user or not pwd_context.verify(body.password, user.hashed_password):
         await record_audit_event(
@@ -198,34 +264,4 @@ async def register(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    result = await db.execute(select(User).where(User.email == body.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    school_id, is_super_admin = await resolve_new_user_scope(body, current_user, db)
-
-    user = User(
-        email=body.email,
-        hashed_password=pwd_context.hash(body.password),
-        role=body.role,
-        school_id=school_id,
-        is_super_admin=is_super_admin,
-    )
-    db.add(user)
-    await db.flush()
-    await record_audit_event(
-        db,
-        request,
-        AuditAction.CREATE_USER,
-        AuditResource.USER,
-        AuditStatus.SUCCESS,
-        actor=current_user,
-        resource_id=user.id,
-        target=user.email,
-        description="Administrator created a user account.",
-        metadata={"role": user.role},
-        school_id=user.school_id,
-    )
-    await db.commit()
-    await db.refresh(user)
-    return UserOut.model_validate(user)
+    return await create_user_account(request, body, db, current_user)

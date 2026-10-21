@@ -147,6 +147,7 @@ async def test_user_create_delete_are_atomic_and_actor_snapshot_survives(
             "email": "temporary.teacher@school.test",
             "password": "temporary-password",
             "role": "staff",
+            "school_id": str(identities["admin"]["school_id"]),
         },
     )
     assert created.status_code == 201

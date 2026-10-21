@@ -15,10 +15,9 @@ from app.schemas.user import (
     UserOut,
 )
 from app.routers.auth import (
+    create_user_account,
     get_current_user,
-    pwd_context,
     require_admin,
-    resolve_new_user_scope,
 )
 from app.services.notification_recipients import resolve_notification_recipients
 from app.notifications.push import (
@@ -110,35 +109,7 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    result = await db.execute(select(User).where(User.email == body.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Email already registered")
-    school_id, is_super_admin = await resolve_new_user_scope(body, current_user, db)
-    user = User(
-        email=body.email,
-        hashed_password=pwd_context.hash(body.password),
-        role=body.role,
-        school_id=school_id,
-        is_super_admin=is_super_admin,
-    )
-    db.add(user)
-    await db.flush()
-    await record_audit_event(
-        db,
-        request,
-        AuditAction.CREATE_USER,
-        AuditResource.USER,
-        AuditStatus.SUCCESS,
-        actor=current_user,
-        resource_id=user.id,
-        target=user.email,
-        description="Administrator created a user account.",
-        metadata={"role": user.role},
-        school_id=user.school_id,
-    )
-    await db.commit()
-    await db.refresh(user)
-    return UserOut.model_validate(user)
+    return await create_user_account(request, body, db, current_user)
 
 
 @router.get("", response_model=List[UserOut], include_in_schema=False)

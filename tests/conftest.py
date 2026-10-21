@@ -187,6 +187,7 @@ async def identities():
                 "id": user.id,
                 "email": user.email,
                 "password": f"{role}-password",
+                "school_id": user.school_id,
                 "token": create_token(user),
             }
             for role, user in users.items()
