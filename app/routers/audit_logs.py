@@ -21,6 +21,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
+from app.services.query_filters import escape_like
 from app.services.school_access import is_global_admin
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
@@ -111,10 +112,6 @@ async def get_audit_log_filters(
     )
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def _conditions(filters: AuditLogFilters, current_user: User | None = None):
     conditions = []
     if current_user is not None and not is_global_admin(current_user):
@@ -124,7 +121,7 @@ def _conditions(filters: AuditLogFilters, current_user: User | None = None):
             else false()
         )
     if filters.search:
-        term = f"%{_escape_like(filters.search)}%"
+        term = f"%{escape_like(filters.search)}%"
         conditions.append(
             or_(
                 AuditLog.actor_email.ilike(term, escape="\\"),

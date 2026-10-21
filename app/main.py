@@ -8,7 +8,12 @@ from app.routers import alerts, logs, auth, users
 from app.routers import classrooms, devices, schools
 from app.routers import dictionary, system_settings, audit_logs, reports
 from app.routers import system_logs
-from app.config import CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS, settings
+from app.config import (
+    CORS_ALLOWED_HEADERS,
+    CORS_ALLOWED_METHODS,
+    CORS_EXPOSED_HEADERS,
+    settings,
+)
 from app.database import engine, Base
 
 # Imported so Base.metadata.create_all picks them up at startup
@@ -107,6 +112,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=list(CORS_ALLOWED_METHODS),
     allow_headers=list(CORS_ALLOWED_HEADERS),
+    expose_headers=list(CORS_EXPOSED_HEADERS),
 )
 
 

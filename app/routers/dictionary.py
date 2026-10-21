@@ -1,14 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from typing import List
 from app.database import get_db
+from app.languages import DictionaryLanguageCode
 from app.models.slur import SlurEntry as SlurModel
 from app.models.user import User
 from app.schemas.dictionary import SlurEntry, SlurCreate
 from app.schemas.alert import normalize_term
 from app.models.alert import AlertMatchedTerm
 from app.routers.auth import require_super_admin
+from app.services.query_filters import escape_like
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -18,11 +20,40 @@ from app.services.audit import (
 
 router = APIRouter(prefix="/dictionary", tags=["Dictionary"])
 
+TOTAL_COUNT_HEADER = "X-Total-Count"
+
 
 @router.get("", response_model=List[SlurEntry], include_in_schema=False)
 @router.get("/", response_model=List[SlurEntry])
-async def get_dictionary(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SlurModel).order_by(SlurModel.severity_weight.desc()))
+async def get_dictionary(
+    response: Response,
+    search: str | None = Query(default=None, max_length=100),
+    language: DictionaryLanguageCode | None = None,
+    skip: int = Query(default=0, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    # Without parameters this still returns every term as a plain list, which the edge's
+    # dictionary sync relies on. X-Total-Count reports the filtered total for paging.
+    conditions = []
+    if search and search.strip():
+        pattern = f"%{escape_like(normalize_term(search))}%"
+        conditions.append(SlurModel.slur_text.ilike(pattern, escape="\\"))
+    if language is not None:
+        conditions.append(SlurModel.language == language.value)
+
+    total = await db.scalar(select(func.count(SlurModel.term_id)).where(*conditions))
+    response.headers[TOTAL_COUNT_HEADER] = str(total)
+
+    query = (
+        select(SlurModel)
+        .where(*conditions)
+        .order_by(SlurModel.severity_weight.desc(), SlurModel.term_id)
+        .offset(skip)
+    )
+    if limit is not None:
+        query = query.limit(limit)
+    result = await db.execute(query)
     return result.scalars().all()
 
 

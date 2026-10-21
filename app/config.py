@@ -10,6 +10,8 @@ CORS_ALLOWED_HEADERS = (
     "X-EchoSense-Device-Key",
     "Idempotency-Key",
 )
+# Readable by browser clients; X-Total-Count carries totals for paginated lists.
+CORS_EXPOSED_HEADERS = ("X-Request-ID", "X-Total-Count")
 
 
 class Settings(BaseSettings):
