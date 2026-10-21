@@ -71,7 +71,10 @@ async def get_current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid token")
     payload = decode_token(authorization.removeprefix("Bearer "))
-    result = await db.execute(select(User).where(User.id == int(payload["sub"])))
+    subject = payload.get("sub")
+    if not isinstance(subject, str) or not subject.isascii() or not subject.isdigit():
+        raise HTTPException(status_code=401, detail="Invalid token")
+    result = await db.execute(select(User).where(User.id == int(subject)))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")

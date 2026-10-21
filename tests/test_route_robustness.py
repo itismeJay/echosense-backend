@@ -1,5 +1,9 @@
-import pytest
+from datetime import datetime, timedelta, timezone
 
+import pytest
+from jose import jwt
+
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.slur import SlurEntry
 from tests.conftest import auth_headers, finalized_alert_fields
@@ -40,3 +44,22 @@ async def test_logs_list_rejects_out_of_range_pagination(client, identities, que
     response = await client.get(f"/logs/?{query}", headers=auth_headers(identities["staff"]))
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claims",
+    [{}, {"sub": "abc"}, {"sub": ""}, {"sub": "-1"}, {"sub": "\u0661"}, {"sub": None}],
+    ids=["missing", "non-numeric", "empty", "negative", "non-ascii-digit", "null"],
+)
+async def test_signed_token_with_invalid_subject_is_unauthorized(client, claims):
+    token = jwt.encode(
+        {**claims, "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+        settings.SECRET_KEY,
+        algorithm="HS256",
+    )
+
+    response = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
