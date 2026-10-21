@@ -17,6 +17,7 @@ router = APIRouter(prefix="/logs", tags=["Logs"])
 EMOTION_BUCKETS = ["angry", "aggressive", "distressed", "upset", "neutral", "unknown"]
 
 
+@router.get("", response_model=List[AlertResponse], include_in_schema=False)
 @router.get("/", response_model=List[AlertResponse])
 async def get_logs(
     skip: int = Query(default=0, ge=0),

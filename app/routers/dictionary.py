@@ -19,12 +19,14 @@ from app.services.audit import (
 router = APIRouter(prefix="/dictionary", tags=["Dictionary"])
 
 
+@router.get("", response_model=List[SlurEntry], include_in_schema=False)
 @router.get("/", response_model=List[SlurEntry])
 async def get_dictionary(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SlurModel).order_by(SlurModel.severity_weight.desc()))
     return result.scalars().all()
 
 
+@router.post("", response_model=SlurEntry, status_code=201, include_in_schema=False)
 @router.post("/", response_model=SlurEntry, status_code=201)
 async def add_slur(
     request: Request,

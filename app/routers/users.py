@@ -102,6 +102,7 @@ async def save_push_token(
     return {"message": "Push token saved"}
 
 
+@router.post("", response_model=UserOut, status_code=201, include_in_schema=False)
 @router.post("/", response_model=UserOut, status_code=201)
 async def create_user(
     request: Request,
@@ -140,6 +141,7 @@ async def create_user(
     return UserOut.model_validate(user)
 
 
+@router.get("", response_model=List[UserOut], include_in_schema=False)
 @router.get("/", response_model=List[UserOut])
 async def get_users(
     db: AsyncSession = Depends(get_db),

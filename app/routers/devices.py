@@ -145,6 +145,7 @@ async def _registration_assignment(
     return school, None
 
 
+@router.post("/", response_model=EdgeDeviceKeyResponse, status_code=201, include_in_schema=False)
 @router.post("", response_model=EdgeDeviceKeyResponse, status_code=201)
 async def create_device(
     request: Request,
@@ -198,6 +199,7 @@ async def create_device(
     )
 
 
+@router.get("/", response_model=list[EdgeDeviceResponse], include_in_schema=False)
 @router.get("", response_model=list[EdgeDeviceResponse])
 async def list_devices(
     school_id: UUID | None = None,

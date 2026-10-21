@@ -41,6 +41,7 @@ async def require_admin_or_counselor(
     return current_user
 
 
+@router.get("", response_model=List[ReportOut], include_in_schema=False)
 @router.get("/", response_model=List[ReportOut])
 async def get_reports(
     db: AsyncSession = Depends(get_db),
@@ -56,6 +57,7 @@ async def get_reports(
     return result.scalars().all()
 
 
+@router.post("", response_model=ReportOut, status_code=201, include_in_schema=False)
 @router.post("/", response_model=ReportOut, status_code=201)
 async def generate_report(
     request: Request,

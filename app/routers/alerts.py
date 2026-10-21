@@ -209,6 +209,7 @@ def legacy_confidence_value(alert: AlertCreate) -> float:
     return 0.0
 
 
+@router.post("", response_model=AlertResponse, include_in_schema=False)
 @router.post("/", response_model=AlertResponse)
 async def create_alert(
     alert: AlertCreate,
@@ -479,6 +480,7 @@ async def get_summary_analytics(
     )
 
 
+@router.get("", response_model=List[AlertResponse], include_in_schema=False)
 @router.get("/", response_model=List[AlertResponse])
 async def get_alerts(
     event_id: UUID | None = None,

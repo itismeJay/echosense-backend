@@ -165,6 +165,7 @@ def _ordered_query(filters: AuditLogFilters, current_user: User | None = None):
     )
 
 
+@router.get("/", response_model=AuditLogPage, include_in_schema=False)
 @router.get("", response_model=AuditLogPage)
 async def get_audit_logs(
     page: Annotated[int, Query(ge=1)] = 1,

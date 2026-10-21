@@ -22,6 +22,7 @@ async def _get_row(db: AsyncSession) -> SystemSettings:
     return result.scalar_one_or_none()
 
 
+@router.get("", response_model=SystemSettingsOut, include_in_schema=False)
 @router.get("/", response_model=SystemSettingsOut)
 async def get_settings(
     db: AsyncSession = Depends(get_db),
@@ -33,6 +34,7 @@ async def get_settings(
     return row
 
 
+@router.put("", response_model=SystemSettingsOut, include_in_schema=False)
 @router.put("/", response_model=SystemSettingsOut)
 async def update_settings(
     request: Request,

@@ -66,6 +66,7 @@ async def _get_classroom(
     return classroom
 
 
+@router.post("/", response_model=ClassroomResponse, status_code=201, include_in_schema=False)
 @router.post("", response_model=ClassroomResponse, status_code=201)
 async def create_classroom(
     request: Request,
@@ -107,6 +108,7 @@ async def create_classroom(
     return _classroom_response(await _get_classroom(classroom.id, db, current_user))
 
 
+@router.get("/", response_model=list[ClassroomResponse], include_in_schema=False)
 @router.get("", response_model=list[ClassroomResponse])
 async def list_classrooms(
     school_id: UUID | None = None,

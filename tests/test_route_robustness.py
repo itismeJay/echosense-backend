@@ -63,3 +63,54 @@ async def test_signed_token_with_invalid_subject_is_unauthorized(client, claims)
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid token"}
+
+
+COLLECTION_GET_ROUTES = [
+    "/alerts",
+    "/logs",
+    "/dictionary",
+    "/reports",
+    "/users",
+    "/system-settings",
+    "/audit-logs",
+    "/classrooms",
+    "/devices",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", COLLECTION_GET_ROUTES)
+@pytest.mark.parametrize("suffix", ["", "/"], ids=["no-slash", "slash"])
+async def test_collection_get_routes_answer_without_redirect(client, identities, path, suffix):
+    response = await client.get(path + suffix, headers=auth_headers(identities["admin"]))
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["", "/"], ids=["no-slash", "slash"])
+async def test_collection_post_routes_answer_without_redirect(client, identities, suffix):
+    headers = auth_headers(identities["admin"])
+
+    report = await client.post(
+        "/reports" + suffix,
+        json={"date_from": "2026-01-01", "date_to": "2026-01-31"},
+        headers=headers,
+    )
+    user = await client.post(
+        "/users" + suffix,
+        json={"email": f"slash{len(suffix)}@school.test", "password": "long-enough-password"},
+        headers=headers,
+    )
+
+    assert report.status_code == 201
+    assert user.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_slash_aliases_are_hidden_from_openapi(client):
+    paths = (await client.get("/openapi.json")).json()["paths"]
+
+    assert "/users/" in paths and "/users" not in paths
+    assert "/devices" in paths and "/devices/" not in paths
