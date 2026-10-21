@@ -33,6 +33,13 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 ALERT_REVIEWER_ROLES = frozenset({"admin", "staff", "counselor"})
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
+SCHOOL_INACTIVE = "school_inactive"
+
+
+def belongs_to_inactive_school(user: User) -> bool:
+    if is_global_admin(user):
+        return False
+    return user.school is not None and not user.school.is_active
 
 
 async def resolve_new_user_scope(
@@ -155,6 +162,9 @@ async def get_authenticated_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # Also revokes tokens issued before the school was deactivated.
+    if belongs_to_inactive_school(user):
+        raise HTTPException(status_code=403, detail=SCHOOL_INACTIVE)
     return user
 
 
@@ -250,6 +260,21 @@ async def login(
         )
         await db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Checked only after the password, so the school state is not disclosed to guessers.
+    if belongs_to_inactive_school(user):
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.LOGIN_FAILED,
+            AuditResource.AUTHENTICATION,
+            AuditStatus.FAILURE,
+            actor=user,
+            description="Login refused because the user's school is inactive.",
+            metadata={"reason": SCHOOL_INACTIVE},
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail=SCHOOL_INACTIVE)
 
     access_token = create_token(user)
     await record_audit_event(

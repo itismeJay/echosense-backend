@@ -7,7 +7,7 @@ from sqlalchemy.orm import joinedload
 
 from app.database import get_db
 from app.models.edge_device import EdgeDevice
-from app.routers.auth import pwd_context
+from app.routers.auth import SCHOOL_INACTIVE, pwd_context
 
 DEVICE_ID_HEADER = "X-EchoSense-Device-Id"
 DEVICE_KEY_HEADER = "X-EchoSense-Device-Key"
@@ -57,6 +57,8 @@ async def authenticate_edge_device(
         raise _credential_error(status_code=403)
     if not verify_device_key(device_key, device.api_key_hash):
         raise _credential_error()
+    if device.school is not None and not device.school.is_active:
+        raise HTTPException(status_code=403, detail=SCHOOL_INACTIVE)
 
     device.last_seen_at = datetime.now(timezone.utc)
     await db.commit()
