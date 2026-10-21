@@ -128,7 +128,9 @@ async def test_users_cannot_be_created_in_inactive_or_unknown_schools(client, or
     )
 
     assert inactive_by_super.status_code == 409
-    assert inactive_by_own_admin.status_code == 409
+    # The inactive school's own admin is locked out before reaching user creation.
+    assert inactive_by_own_admin.status_code == 403
+    assert inactive_by_own_admin.json()["detail"] == "school_inactive"
     assert unknown.status_code == 404
 
 
