@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models.alert import Alert
 from app.routers.auth import require_alert_reviewer
 from app.schemas.alert import AlertResponse
-from app.routers.alerts import hydrate_alert
+from app.routers.alerts import alert_load_options, hydrate_alert
 from app.services.school_access import scope_alert_query
 from typing import List
 
@@ -26,6 +26,7 @@ async def get_logs(
 ):
     result = await db.execute(
         scope_alert_query(select(Alert), current_user)
+        .options(*alert_load_options())
         .order_by(Alert.created_at.desc())
         .offset(skip)
         .limit(limit)
