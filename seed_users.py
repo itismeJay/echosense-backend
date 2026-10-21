@@ -1,3 +1,4 @@
+# Demo admin credentials: see CREDENTIALS.local.md (gitignored)
 import argparse
 import asyncio
 import os

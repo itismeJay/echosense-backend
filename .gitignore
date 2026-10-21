@@ -33,3 +33,6 @@ logs/
 dist/
 build/
 *.egg-info/
+
+# Local-only credentials notes
+CREDENTIALS.local.md
