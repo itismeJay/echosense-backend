@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from typing import List
@@ -9,7 +9,7 @@ from app.models.user import User
 from app.schemas.dictionary import SlurEntry, SlurCreate
 from app.schemas.alert import normalize_term
 from app.models.alert import AlertMatchedTerm
-from app.routers.auth import require_super_admin
+from app.routers.auth import get_authenticated_user, get_current_user, require_admin, require_super_admin
 from app.services.query_filters import escape_like
 from app.services.audit import (
     AuditAction,
@@ -23,6 +23,18 @@ router = APIRouter(prefix="/dictionary", tags=["Dictionary"])
 TOTAL_COUNT_HEADER = "X-Total-Count"
 
 
+async def require_admin_if_signed_in(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Signed-in readers must be admins; the edge's dictionary sync still sends no credentials."""
+    if authorization is None:
+        return None
+    user = await get_current_user(await get_authenticated_user(authorization, db))
+    return await require_admin(request, user, db)
+
+
 @router.get("", response_model=List[SlurEntry], include_in_schema=False)
 @router.get("/", response_model=List[SlurEntry])
 async def get_dictionary(
@@ -32,6 +44,7 @@ async def get_dictionary(
     skip: int = Query(default=0, ge=0),
     limit: int | None = Query(default=None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
+    _: User | None = Depends(require_admin_if_signed_in),
 ):
     # Without parameters this still returns every term as a plain list, which the edge's
     # dictionary sync relies on. X-Total-Count reports the filtered total for paging.
