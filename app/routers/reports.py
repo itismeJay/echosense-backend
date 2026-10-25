@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import Date, cast, false, func, select
 from typing import List
@@ -7,7 +7,7 @@ from app.models.report import Report
 from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.report import ReportCreate, ReportOut
-from app.routers.auth import get_current_user
+from app.routers.auth import require_admin_or_counselor
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -17,28 +17,6 @@ from app.services.audit import (
 from app.services.school_access import is_global_admin, scope_alert_query
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
-
-
-async def require_admin_or_counselor(
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    if current_user.role not in ("admin", "counselor"):
-        await record_audit_event(
-            db,
-            request,
-            AuditAction.PERMISSION_DENIED,
-            AuditResource.SECURITY,
-            AuditStatus.FAILURE,
-            actor=current_user,
-            target=request.url.path,
-            description="User was denied access to a restricted report operation.",
-            metadata={"method": request.method},
-        )
-        await db.commit()
-        raise HTTPException(status_code=403, detail="Admin or counselor access required")
-    return current_user
 
 
 @router.get("", response_model=List[ReportOut], include_in_schema=False)

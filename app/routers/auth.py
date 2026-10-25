@@ -32,6 +32,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 ALERT_REVIEWER_ROLES = frozenset({"admin", "staff", "counselor"})
+REPORT_VIEWER_ROLES = frozenset({"admin", "counselor"})
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
 SCHOOL_INACTIVE = "school_inactive"
 
@@ -237,6 +238,29 @@ async def require_alert_reviewer(
         )
         await db.commit()
         raise HTTPException(status_code=403, detail="Alert reviewer access required")
+    return current_user
+
+
+async def require_admin_or_counselor(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Reports and report analytics: admins and counselors, never staff."""
+    if current_user.role not in REPORT_VIEWER_ROLES:
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.PERMISSION_DENIED,
+            AuditResource.SECURITY,
+            AuditStatus.FAILURE,
+            actor=current_user,
+            target=request.url.path,
+            description="User was denied access to a restricted report operation.",
+            metadata={"method": request.method},
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail="Admin or counselor access required")
     return current_user
 
 
