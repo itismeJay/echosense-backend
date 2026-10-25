@@ -24,7 +24,7 @@ from app.schemas.alert import (
     normalize_term,
 )
 from app.notifications.push import send_expo_pushes
-from app.routers.auth import require_alert_reviewer
+from app.routers.auth import require_admin_or_counselor, require_alert_reviewer
 from app.services.notification_recipients import resolve_notification_recipients
 from app.services.device_auth import authenticate_edge_device
 from app.services.school_access import is_global_admin, scope_alert_query
@@ -370,7 +370,7 @@ async def create_alert(
 @router.get("/analytics/categories", response_model=AlertAnalyticsResponse)
 async def get_category_analytics(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_alert_reviewer),
+    current_user=Depends(require_admin_or_counselor),
 ):
     result = await db.execute(scope_alert_query(select(Alert), current_user))
     alerts = result.scalars().all()
@@ -453,7 +453,7 @@ def _period_stats(alerts: list) -> PeriodStats:
 @router.get("/analytics/summary", response_model=AlertSummaryResponse)
 async def get_summary_analytics(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_alert_reviewer),
+    current_user=Depends(require_admin_or_counselor),
 ):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)

@@ -143,7 +143,9 @@ async def test_alert_evidence_reads_require_authentication(client, identities):
 
         for role in ("admin", "staff", "counselor"):
             authorized = await client.get(path, headers=auth_headers(identities[role]))
-            assert authorized.status_code == 200
+            # Staff read alerts and history but not report analytics.
+            expected = 403 if role == "staff" and "/analytics/" in path else 200
+            assert authorized.status_code == expected
 
 
 @pytest.mark.asyncio

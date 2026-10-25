@@ -492,8 +492,13 @@ async def test_alert_spoofing_filters_and_school_isolation(
     )
     all_alpha = await client.get("/alerts/", headers=alpha_staff_headers)
     all_beta = await client.get("/alerts/", headers=beta_staff_headers)
-    alpha_summary = await client.get("/alerts/analytics/summary", headers=alpha_staff_headers)
-    beta_summary = await client.get("/alerts/analytics/summary", headers=beta_staff_headers)
+    # Report analytics are for admins and counselors, so school scoping is checked as admin.
+    alpha_summary = await client.get(
+        "/alerts/analytics/summary", headers=auth_headers(rooms["alpha_admin"])
+    )
+    beta_summary = await client.get(
+        "/alerts/analytics/summary", headers=auth_headers(rooms["beta_admin"])
+    )
     cross_school_filter = await client.get(
         f"/alerts/?school_id={rooms['beta']}", headers=alpha_staff_headers
     )
