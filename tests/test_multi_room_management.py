@@ -731,3 +731,43 @@ async def test_notification_recipient_selection_is_school_scoped(rooms):
     assert set(alpha.tokens) == {tokens["alpha_admin"], tokens["alpha_staff"]}
     assert set(beta.tokens) == {tokens["beta_admin"], tokens["beta_staff"]}
     assert set(alpha.tokens).isdisjoint({tokens["beta_admin"], tokens["beta_staff"]})
+
+
+@pytest.mark.asyncio
+async def test_device_alert_pushes_only_to_its_own_school(
+    client, unauthenticated_edge_client, rooms, prevent_external_notifications
+):
+    tokens = {
+        "alpha_staff": "ExponentPushToken[alpha-isolation-token]",
+        "beta_staff": "ExponentPushToken[beta-isolation-token]",
+    }
+    async with AsyncSessionLocal() as session:
+        for name, token in tokens.items():
+            user = await session.get(User, rooms[name]["id"])
+            user.push_token = token
+        await session.commit()
+
+    async def alert_from(code: str, classroom_id: UUID, identity: dict):
+        created = await client.post(
+            "/devices",
+            json={"device_code": code, "display_name": code, "classroom_id": str(classroom_id)},
+            headers=auth_headers(identity),
+        )
+        prevent_external_notifications.reset_mock()
+        response = await unauthenticated_edge_client.post(
+            "/alerts/",
+            json=_alert_payload(code),
+            headers={
+                "X-EchoSense-Device-Id": code,
+                "X-EchoSense-Device-Key": created.json()["device_key"],
+            },
+        )
+        assert response.status_code == 200
+        prevent_external_notifications.assert_called_once()
+        return set(prevent_external_notifications.call_args.args[0])
+
+    alpha_recipients = await alert_from("device-alpha-push", rooms["a101"], rooms["alpha_admin"])
+    beta_recipients = await alert_from("device-beta-push", rooms["b201"], rooms["beta_admin"])
+
+    assert alpha_recipients == {tokens["alpha_staff"]}
+    assert beta_recipients == {tokens["beta_staff"]}
