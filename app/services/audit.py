@@ -42,6 +42,7 @@ class AuditAction(str, Enum):
     UPDATE_CLASSROOM = "UPDATE_CLASSROOM"
     CREATE_SCHOOL = "CREATE_SCHOOL"
     UPDATE_SCHOOL = "UPDATE_SCHOOL"
+    REVIEW_ALERT = "REVIEW_ALERT"
     PERMISSION_DENIED = "PERMISSION_DENIED"
 
 
@@ -55,6 +56,7 @@ class AuditResource(str, Enum):
     EDGE_DEVICE = "EdgeDevice"
     CLASSROOM = "Classroom"
     SCHOOL = "School"
+    ALERT = "Alert"
     SECURITY = "Security"
 
 

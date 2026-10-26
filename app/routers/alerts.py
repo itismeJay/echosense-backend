@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +17,8 @@ from app.models.slur import SlurEntry
 from app.schemas.alert import (
     AlertCreate,
     AlertResponse,
+    AlertReviewRequest,
+    AlertReviewStatus,
     AlertAnalyticsResponse,
     AlertSummaryResponse,
     PeriodStats,
@@ -27,6 +29,12 @@ from app.notifications.push import send_expo_pushes
 from app.routers.auth import require_admin_or_counselor, require_alert_reviewer
 from app.services.notification_recipients import resolve_notification_recipients
 from app.services.device_auth import authenticate_edge_device
+from app.services.audit import (
+    AuditAction,
+    AuditResource,
+    AuditStatus,
+    record_audit_event,
+)
 from app.services.school_access import is_global_admin, scope_alert_query
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
@@ -491,12 +499,21 @@ async def get_alerts(
     category: Optional[str] = None,
     language: Optional[LanguageCode] = None,
     duration_gate: Optional[str] = None,
+    status: AlertReviewStatus | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_alert_reviewer),
 ):
     query = scope_alert_query(select(Alert), current_user)
+    if status is not None:
+        query = query.where(Alert.status == status)
+    if date_from is not None:
+        query = query.where(Alert.created_at >= _aware(date_from))
+    if date_to is not None:
+        query = query.where(Alert.created_at < _aware(date_to))
     query = query.options(*alert_load_options()).order_by(Alert.created_at.desc())
     if event_id is not None:
         query = query.where(Alert.event_id == event_id)
@@ -531,6 +548,52 @@ async def get_alerts(
         query = query.limit(limit)
     result = await db.execute(query)
     return [hydrate_alert(a) for a in result.scalars().all()]
+
+
+def _aware(value: datetime) -> datetime:
+    """Treat a timestamp without a zone as UTC."""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+@router.post("/{alert_id}/review", response_model=AlertResponse)
+async def review_alert(
+    request: Request,
+    alert_id: int,
+    body: AlertReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_alert_reviewer),
+):
+    """Mark an alert reviewed or resolved. Anyone who can read the alert may review it."""
+    result = await db.execute(
+        scope_alert_query(select(Alert), current_user)
+        .where(Alert.id == alert_id)
+        .options(*alert_load_options())
+        .with_for_update(of=Alert)
+    )
+    alert = result.scalar_one_or_none()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    previous = alert.status
+    if previous != body.status:
+        alert.status = body.status
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.REVIEW_ALERT,
+            AuditResource.ALERT,
+            AuditStatus.SUCCESS,
+            actor=current_user,
+            resource_id=alert.id,
+            target=alert.classroom_name_snapshot or alert.location,
+            description="User changed an alert's review status.",
+            metadata={"previous_status": previous, "new_status": body.status},
+            school_id=alert.school_id,
+        )
+        await db.commit()
+    result = await db.execute(
+        select(Alert).where(Alert.id == alert_id).options(*alert_load_options())
+    )
+    return hydrate_alert(result.scalar_one())
 
 
 @router.get("/{alert_id}", response_model=AlertResponse)

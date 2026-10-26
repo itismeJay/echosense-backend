@@ -599,3 +599,14 @@ class AlertSummaryResponse(BaseModel):
     today: PeriodStats
     this_week: PeriodStats
     all_time: PeriodStats
+
+
+AlertReviewStatus = Literal["active", "reviewed", "resolved"]
+
+
+class AlertReviewRequest(BaseModel):
+    """Staff mark an alert reviewed or resolved, or set it back to needing review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: AlertReviewStatus
