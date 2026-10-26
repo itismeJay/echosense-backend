@@ -38,7 +38,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
-from app.services.school_access import is_global_admin
+from app.services.school_access import is_global_admin, resolve_school_scope
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -126,14 +126,16 @@ async def create_user(
 @router.get("", response_model=List[UserOut], include_in_schema=False)
 @router.get("/", response_model=List[UserOut])
 async def get_users(
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    query = select(User)
-    if not is_global_admin(current_user):
-        if current_user.school_id is None:
-            raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
-        query = query.where(User.school_id == current_user.school_id)
+    query = select(User).order_by(User.email)
+    if not is_global_admin(current_user) and current_user.school_id is None:
+        raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
+    scoped = resolve_school_scope(current_user, school_id)
+    if scoped is not None:
+        query = query.where(User.school_id == scoped)
     result = await db.execute(query)
     return [UserOut.model_validate(user) for user in result.scalars().all()]
 

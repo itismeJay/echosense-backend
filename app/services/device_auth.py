@@ -64,3 +64,31 @@ async def authenticate_edge_device(
     await db.commit()
     await db.refresh(device)
     return device
+
+
+async def stamp_device_check_in(
+    db: AsyncSession, device_code: str | None, device_key: str | None
+) -> EdgeDevice | None:
+    """Record a check-in for a device whose credentials are valid; otherwise do nothing.
+
+    Used by the heartbeat, which still accepts anonymous calls for the global status, so
+    bad or missing credentials are ignored rather than rejected.
+    """
+
+    if not device_code or not device_key or len(device_code) > 100 or len(device_key) > 256:
+        return None
+    result = await db.execute(
+        select(EdgeDevice)
+        .where(EdgeDevice.device_code == device_code.strip())
+        .options(joinedload(EdgeDevice.school))
+    )
+    device = result.scalar_one_or_none()
+    if device is None:
+        verify_device_key(device_key, _DUMMY_DEVICE_KEY_HASH)
+        return None
+    if not verify_device_key(device_key, device.api_key_hash):
+        return None
+    if not device.is_active or (device.school is not None and not device.school.is_active):
+        return None
+    device.last_seen_at = datetime.now(timezone.utc)
+    return device

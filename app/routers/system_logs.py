@@ -17,7 +17,7 @@ from app.services.device_auth import (
     DEVICE_KEY_HEADER,
     authenticate_edge_device,
 )
-from app.services.school_access import is_global_admin
+from app.services.school_access import is_global_admin, resolve_school_scope
 
 router = APIRouter(prefix="/system", tags=["System Logs"])
 
@@ -126,17 +126,19 @@ def get_logs(
     type: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=500),
+    school_id: UUID | None = None,
     current_user: User = Depends(require_admin),
 ):
     with _log_lock:
         buffered = list(_log_lines)
 
-    if is_global_admin(current_user):
+    if not is_global_admin(current_user) and current_user.school_id is None:
+        raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
+    scoped = resolve_school_scope(current_user, school_id)
+    if scoped is None:
         lines = [item.line for item in buffered]
     else:
-        if current_user.school_id is None:
-            raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
-        lines = [item.line for item in buffered if item.school_id == current_user.school_id]
+        lines = [item.line for item in buffered if item.school_id == scoped]
 
     if type:
         lines = [l for l in lines if l.type == type]

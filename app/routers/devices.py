@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -13,10 +13,12 @@ from app.models.classroom import Classroom
 from app.models.edge_device import EdgeDevice
 from app.models.school import School
 from app.models.user import User
-from app.routers.auth import require_admin
+from app.routers.auth import require_admin, require_alert_reviewer
 from app.schemas.edge_device import (
     DEVICE_KEY_WARNING,
     DeviceAssignmentRequest,
+    DeviceStatusItem,
+    DeviceStatusResponse,
     EdgeDeviceCreate,
     EdgeDeviceKeyResponse,
     EdgeDeviceResponse,
@@ -29,7 +31,12 @@ from app.services.audit import (
     record_audit_event,
 )
 from app.services.device_auth import hash_device_key
-from app.services.school_access import is_global_admin, require_school_access
+from app.services.device_status import ONLINE_WINDOW_SECONDS, is_device_online
+from app.services.school_access import (
+    is_global_admin,
+    require_school_access,
+    resolve_school_scope,
+)
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -231,6 +238,49 @@ async def list_devices(
         query = query.where(EdgeDevice.classroom_id.is_not(None))
     devices = list((await db.execute(query.order_by(EdgeDevice.device_code))).scalars().all())
     return [_device_response(device) for device in devices]
+
+
+@router.get("/status", response_model=DeviceStatusResponse)
+async def device_status(
+    school_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_alert_reviewer),
+):
+    """Online/offline for each classroom device, from its own last check-in.
+
+    Open to every signed-in role (the Overview shows it to teachers too), limited to the
+    caller's school; super admins may pass school_id or see every school.
+    """
+
+    scoped = resolve_school_scope(current_user, school_id)
+    query = select(EdgeDevice).options(
+        joinedload(EdgeDevice.classroom), joinedload(EdgeDevice.school)
+    )
+    if scoped is not None:
+        query = query.where(EdgeDevice.school_id == scoped)
+    elif not is_global_admin(current_user):
+        query = query.where(false())
+    devices = (await db.execute(query.order_by(EdgeDevice.display_name))).scalars().all()
+    now = datetime.now(timezone.utc)
+    return DeviceStatusResponse(
+        checked_at=now,
+        online_window_seconds=ONLINE_WINDOW_SECONDS,
+        devices=[
+            DeviceStatusItem(
+                id=device.id,
+                display_name=device.display_name,
+                device_code=device.device_code,
+                school_id=device.school_id,
+                school_name=device.school.name if device.school else None,
+                classroom_id=device.classroom_id,
+                classroom_name=device.classroom.name if device.classroom else None,
+                is_active=device.is_active,
+                last_seen_at=device.last_seen_at,
+                online=device.is_active and is_device_online(device.last_seen_at, now),
+            )
+            for device in devices
+        ],
+    )
 
 
 @router.get("/{device_id}", response_model=EdgeDeviceResponse)

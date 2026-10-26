@@ -53,3 +53,24 @@ class SchoolResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class SchoolUserCounts(BaseModel):
+    admin: int = 0
+    counselor: int = 0
+    staff: int = 0
+
+
+class SchoolSummary(BaseModel):
+    """One card on the super admin's All schools page."""
+
+    id: UUID
+    name: str
+    is_active: bool
+    created_at: datetime
+    alerts_needing_review: int
+    high_today: int
+    alerts_this_week: int
+    devices_online: int
+    devices_total: int
+    users: SchoolUserCounts

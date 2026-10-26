@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -22,7 +23,7 @@ from app.services.audit import (
     record_audit_event,
 )
 from app.services.query_filters import escape_like
-from app.services.school_access import is_global_admin
+from app.services.school_access import is_global_admin, resolve_school_scope
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
@@ -112,8 +113,12 @@ async def get_audit_log_filters(
     )
 
 
-def _conditions(filters: AuditLogFilters, current_user: User | None = None):
+def _conditions(
+    filters: AuditLogFilters, current_user: User | None = None, school_id: UUID | None = None
+):
     conditions = []
+    if current_user is not None and is_global_admin(current_user) and school_id is not None:
+        conditions.append(AuditLog.school_id == school_id)
     if current_user is not None and not is_global_admin(current_user):
         conditions.append(
             AuditLog.school_id == current_user.school_id
@@ -148,7 +153,9 @@ def _conditions(filters: AuditLogFilters, current_user: User | None = None):
     return conditions
 
 
-def _ordered_query(filters: AuditLogFilters, current_user: User | None = None):
+def _ordered_query(
+    filters: AuditLogFilters, current_user: User | None = None, school_id: UUID | None = None
+):
     occurred_at = (
         AuditLog.occurred_at.asc().nullslast()
         if filters.sort_order == "asc"
@@ -157,7 +164,7 @@ def _ordered_query(filters: AuditLogFilters, current_user: User | None = None):
     identifier = AuditLog.id.asc() if filters.sort_order == "asc" else AuditLog.id.desc()
     return (
         select(AuditLog)
-        .where(*_conditions(filters, current_user))
+        .where(*_conditions(filters, current_user, school_id))
         .order_by(occurred_at, identifier)
     )
 
@@ -168,15 +175,19 @@ async def get_audit_logs(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     filters: AuditLogFilters = Depends(get_audit_log_filters),
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    conditions = _conditions(filters, current_user)
+    resolve_school_scope(current_user, school_id)
+    conditions = _conditions(filters, current_user, school_id)
     total_result = await db.execute(select(func.count(AuditLog.id)).where(*conditions))
     total = int(total_result.scalar_one())
 
     result = await db.execute(
-        _ordered_query(filters, current_user).offset((page - 1) * page_size).limit(page_size)
+        _ordered_query(filters, current_user, school_id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     items = result.scalars().all()
     return AuditLogPage(
@@ -209,10 +220,12 @@ def _csv_safe(value) -> str:
 async def export_audit_logs(
     request: Request,
     filters: AuditLogFilters = Depends(get_audit_log_filters),
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    conditions = _conditions(filters, current_user)
+    resolve_school_scope(current_user, school_id)
+    conditions = _conditions(filters, current_user, school_id)
     total_result = await db.execute(select(func.count(AuditLog.id)).where(*conditions))
     total = int(total_result.scalar_one())
     if total > MAX_EXPORT_ROWS:
@@ -226,7 +239,9 @@ async def export_audit_logs(
 
     # The count is checked first for a clear error, and the query has its own
     # hard ceiling so concurrent inserts cannot bypass the export limit.
-    result = await db.execute(_ordered_query(filters, current_user).limit(MAX_EXPORT_ROWS + 1))
+    result = await db.execute(
+        _ordered_query(filters, current_user, school_id).limit(MAX_EXPORT_ROWS + 1)
+    )
     records = result.scalars().all()
     if len(records) > MAX_EXPORT_ROWS:
         raise HTTPException(

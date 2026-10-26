@@ -15,6 +15,7 @@ ANY_UUID = str(uuid4())
 
 SUPER_ADMIN_ONLY = [
     ("GET", "/schools"),
+    ("GET", "/schools/summary"),
     ("POST", "/schools"),
     ("GET", f"/schools/{ANY_UUID}"),
     ("PATCH", f"/schools/{ANY_UUID}"),
@@ -52,6 +53,7 @@ EVERYONE = [
     ("GET", "/logs/"),
     ("GET", "/logs/stats"),
     ("GET", "/system-settings/heartbeat"),
+    ("GET", "/devices/status"),
     ("GET", "/auth/me"),
 ]
 

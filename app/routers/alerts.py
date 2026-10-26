@@ -35,7 +35,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
-from app.services.school_access import is_global_admin, scope_alert_query
+from app.services.school_access import scope_alert_query
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
 
@@ -377,10 +377,11 @@ async def create_alert(
 
 @router.get("/analytics/categories", response_model=AlertAnalyticsResponse)
 async def get_category_analytics(
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin_or_counselor),
 ):
-    result = await db.execute(scope_alert_query(select(Alert), current_user))
+    result = await db.execute(scope_alert_query(select(Alert), current_user, school_id))
     alerts = result.scalars().all()
 
     by_category: dict = {}
@@ -460,6 +461,7 @@ def _period_stats(alerts: list) -> PeriodStats:
 
 @router.get("/analytics/summary", response_model=AlertSummaryResponse)
 async def get_summary_analytics(
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin_or_counselor),
 ):
@@ -467,7 +469,7 @@ async def get_summary_analytics(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
 
-    all_result = await db.execute(scope_alert_query(select(Alert), current_user))
+    all_result = await db.execute(scope_alert_query(select(Alert), current_user, school_id))
     all_alerts = all_result.scalars().all()
 
     today_alerts = [
@@ -507,7 +509,7 @@ async def get_alerts(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_alert_reviewer),
 ):
-    query = scope_alert_query(select(Alert), current_user)
+    query = scope_alert_query(select(Alert), current_user, school_id)
     if status is not None:
         query = query.where(Alert.status == status)
     if date_from is not None:
@@ -519,14 +521,6 @@ async def get_alerts(
         query = query.where(Alert.event_id == event_id)
     if classroom_id is not None:
         query = query.where(Alert.classroom_id == classroom_id)
-    if school_id is not None:
-        if (
-            not is_global_admin(current_user)
-            and current_user.school_id is not None
-            and school_id != current_user.school_id
-        ):
-            raise HTTPException(status_code=403, detail="School access denied")
-        query = query.where(Alert.school_id == school_id)
     if device_id is not None:
         query = query.where(Alert.edge_device_id == device_id)
     if severity:

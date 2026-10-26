@@ -119,3 +119,24 @@ class EdgeDeviceKeyResponse(BaseModel):
         repr=False,
     )
     warning: Literal["Store this key securely. It will not be shown again."] = DEVICE_KEY_WARNING
+
+
+class DeviceStatusItem(BaseModel):
+    """What staff need to know about a classroom device: where it is and if it's online."""
+
+    id: UUID
+    display_name: str
+    device_code: str
+    school_id: UUID | None
+    school_name: str | None
+    classroom_id: UUID | None
+    classroom_name: str | None
+    is_active: bool
+    last_seen_at: datetime | None
+    online: bool
+
+
+class DeviceStatusResponse(BaseModel):
+    checked_at: datetime
+    online_window_seconds: int
+    devices: list[DeviceStatusItem]

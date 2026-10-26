@@ -81,7 +81,9 @@ async def test_another_schools_staff_cannot_review_or_see_the_alert(client, org_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body", [{"status": "deleted"}, {"status": ""}, {}, {"status": "reviewed", "x": 1}])
+@pytest.mark.parametrize(
+    "body", [{"status": "deleted"}, {"status": ""}, {}, {"status": "reviewed", "x": 1}]
+)
 async def test_review_rejects_unknown_statuses_and_fields(client, org_identities, body):
     alert_id = await _create_alert(client)
 
@@ -93,7 +95,9 @@ async def test_review_rejects_unknown_statuses_and_fields(client, org_identities
 
 
 @pytest.mark.asyncio
-async def test_review_requires_sign_in_and_a_known_alert(client, unauthenticated_edge_client, org_identities):
+async def test_review_requires_sign_in_and_a_known_alert(
+    client, unauthenticated_edge_client, org_identities
+):
     alert_id = await _create_alert(client)
 
     anonymous = await unauthenticated_edge_client.post(

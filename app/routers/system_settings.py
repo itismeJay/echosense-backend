@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -7,6 +7,11 @@ from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.schemas.system_settings import SystemSettingsOut, SystemSettingsUpdate
 from app.routers.auth import require_admin, require_super_admin
+from app.services.device_auth import (
+    DEVICE_ID_HEADER,
+    DEVICE_KEY_HEADER,
+    stamp_device_check_in,
+)
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -89,14 +94,25 @@ async def update_settings(
 
 
 @router.post("/heartbeat")
-async def post_heartbeat(db: AsyncSession = Depends(get_db)):
+async def post_heartbeat(
+    db: AsyncSession = Depends(get_db),
+    device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
+    device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
+):
     now = datetime.now(timezone.utc)
     row = await _get_row(db)
     if row:
         row.device_status = "online"
         row.last_heartbeat = now.replace(tzinfo=None)  # TIMESTAMP col requires naive datetime
-        await db.commit()
-    return {"status": "ok", "timestamp": now.isoformat()}
+    # A device that sends its credentials also records its own check-in, which is what
+    # the per-device Online/Offline status reads.
+    device = await stamp_device_check_in(db, device_code, device_key)
+    await db.commit()
+    return {
+        "status": "ok",
+        "timestamp": now.isoformat(),
+        "device_recognized": device is not None,
+    }
 
 
 @router.get("/heartbeat")
