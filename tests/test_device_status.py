@@ -115,6 +115,43 @@ async def test_heartbeat_with_a_wrong_key_records_nothing(unauthenticated_edge_c
 
 
 @pytest.mark.asyncio
+async def test_authenticated_heartbeat_reports_the_models_settings_shows(
+    client, edge_device_identity, org_identities
+):
+    heartbeat = await client.post(
+        "/system-settings/heartbeat",
+        headers=edge_device_identity["headers"],
+        json={
+            "ip": "10.0.0.2",
+            "stt_model_version": "whisper small int8 tl+en (faster-whisper 1.2.1)",
+            "yamnet_version": "YAMNet TFLite (ai-edge-litert 2.3.0)",
+        },
+    )
+
+    assert heartbeat.status_code == 200
+    async with AsyncSessionLocal() as session:
+        settings_row = await session.scalar(select(SystemSettings))
+        assert settings_row.stt_model_version == "whisper small int8 tl+en (faster-whisper 1.2.1)"
+        assert settings_row.yamnet_version == "YAMNet TFLite (ai-edge-litert 2.3.0)"
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_heartbeat_cannot_change_reported_models(
+    unauthenticated_edge_client,
+):
+    async with AsyncSessionLocal() as session:
+        before = (await session.scalar(select(SystemSettings))).stt_model_version
+
+    heartbeat = await unauthenticated_edge_client.post(
+        "/system-settings/heartbeat", json={"stt_model_version": "spoofed"}
+    )
+
+    assert heartbeat.status_code == 200
+    async with AsyncSessionLocal() as session:
+        assert (await session.scalar(select(SystemSettings))).stt_model_version == before
+
+
+@pytest.mark.asyncio
 async def test_disabled_device_is_never_online(client, edge_device_identity, org_identities):
     async with AsyncSessionLocal() as session:
         device = await session.scalar(

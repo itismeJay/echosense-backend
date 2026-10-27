@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -93,11 +94,30 @@ async def update_settings(
     return row
 
 
+# system_settings.stt_model_version / yamnet_version are VARCHAR(50).
+MODEL_VERSION_MAX_LENGTH = 50
+
+
+class HeartbeatReport(BaseModel):
+    """Optional heartbeat body. Network fields (ip, ssid, ...) are accepted and ignored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stt_model_version: str | None = None
+    yamnet_version: str | None = None
+
+
+def _model_version(value: str | None) -> str | None:
+    text = " ".join(str(value or "").split())
+    return text[:MODEL_VERSION_MAX_LENGTH] or None
+
+
 @router.post("/heartbeat")
 async def post_heartbeat(
     db: AsyncSession = Depends(get_db),
     device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
     device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
+    report: HeartbeatReport | None = Body(default=None),
 ):
     now = datetime.now(timezone.utc)
     row = await _get_row(db)
@@ -107,6 +127,15 @@ async def post_heartbeat(
     # A device that sends its credentials also records its own check-in, which is what
     # the per-device Online/Offline status reads.
     device = await stamp_device_check_in(db, device_code, device_key)
+    # Settings shows the speech and sound models the edge really runs. Only an
+    # authenticated device may change them.
+    if row and device is not None and report is not None:
+        stt = _model_version(report.stt_model_version)
+        yamnet = _model_version(report.yamnet_version)
+        if stt:
+            row.stt_model_version = stt
+        if yamnet:
+            row.yamnet_version = yamnet
     await db.commit()
     return {
         "status": "ok",
