@@ -14,15 +14,14 @@ async def test_settings_response_returns_new_field_and_deprecated_alias(client, 
 
 
 @pytest.mark.asyncio
-async def test_settings_update_response_keeps_both_fields(client, identities):
+async def test_global_settings_can_no_longer_be_updated(client, identities):
     response = await client.put(
         "/system-settings/",
         json={"confidence_threshold": 0.7},
         headers=auth_headers(identities["admin"]),
     )
 
-    assert response.status_code == 200
-    assert response.json()["vosk_version"] == response.json()["stt_model_version"]
+    assert response.status_code == 405
 
 
 @pytest.mark.asyncio

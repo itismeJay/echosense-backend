@@ -30,7 +30,9 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
-from app.services.device_auth import hash_device_key
+from app.schemas.school_settings import DeviceConfigOut
+from app.services.device_auth import authenticate_edge_device, hash_device_key
+from app.services.school_settings import config_version, effective_terms, get_school_settings
 from app.services.device_status import ONLINE_WINDOW_SECONDS, is_device_online
 from app.services.school_access import (
     is_global_admin,
@@ -280,6 +282,33 @@ async def device_status(
             )
             for device in devices
         ],
+    )
+
+
+@router.get("/me/config", response_model=DeviceConfigOut)
+async def get_my_device_config(
+    db: AsyncSession = Depends(get_db),
+    device: EdgeDevice = Depends(authenticate_edge_device),
+):
+    """The effective detection config for the calling device's school.
+
+    terms = global dictionary minus the school's disabled terms, plus the school's own
+    terms. config_version changes whenever terms or sensitivity change.
+    """
+
+    if device.school_id is None:
+        raise HTTPException(status_code=409, detail="Device is not assigned to a school")
+    settings = await get_school_settings(db, device.school_id)
+    terms = await effective_terms(db, device.school_id)
+    await db.commit()
+    versioned = {"sensitivity": settings.sensitivity, "terms": terms}
+    return DeviceConfigOut(
+        device_code=device.device_code,
+        school_id=device.school_id,
+        sensitivity=settings.sensitivity,
+        terms=terms,
+        config_version=config_version(versioned),
+        generated_at=datetime.now(timezone.utc),
     )
 
 

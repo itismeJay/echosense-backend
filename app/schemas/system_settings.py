@@ -5,8 +5,6 @@ from typing import Optional
 
 class SystemSettingsOut(BaseModel):
     setting_id: int
-    confidence_threshold: float
-    aggression_duration_threshold: float
     device_status: str
     last_heartbeat: Optional[datetime] = None
     stt_model_version: str
@@ -25,8 +23,3 @@ class SystemSettingsOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class SystemSettingsUpdate(BaseModel):
-    confidence_threshold: Optional[float] = None
-    aggression_duration_threshold: Optional[float] = None

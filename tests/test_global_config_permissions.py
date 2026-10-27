@@ -17,36 +17,33 @@ async def _seed_term() -> int:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("identity", ["admin_a", "admin_b"])
-async def test_school_admins_can_read_but_not_change_global_settings(
+async def test_school_admins_cannot_read_or_change_global_settings(
     client, org_identities, identity
 ):
     headers = auth_headers(org_identities[identity])
 
     read = await client.get("/system-settings/", headers=headers)
-    update = await client.put(
-        "/system-settings/", json={"confidence_threshold": 0.9}, headers=headers
-    )
     ota = await client.post("/system-settings/ota-push", headers=headers)
-    after = await client.get("/system-settings/", headers=headers)
 
-    assert read.status_code == 200
-    assert update.status_code == 403
+    assert read.status_code == 403
     assert ota.status_code == 403
-    assert after.json()["confidence_threshold"] == read.json()["confidence_threshold"]
-    assert after.json()["last_ota_update"] is None
 
 
 @pytest.mark.asyncio
-async def test_super_admin_can_change_global_settings(client, org_identities):
+async def test_super_admin_reads_engine_info_without_fake_sliders(client, org_identities):
     headers = auth_headers(org_identities["super"])
 
-    update = await client.put(
+    read = await client.get("/system-settings/", headers=headers)
+    removed_update = await client.put(
         "/system-settings/", json={"confidence_threshold": 0.9}, headers=headers
     )
     ota = await client.post("/system-settings/ota-push", headers=headers)
 
-    assert update.status_code == 200
-    assert update.json()["confidence_threshold"] == 0.9
+    assert read.status_code == 200
+    assert "confidence_threshold" not in read.json()
+    assert "aggression_duration_threshold" not in read.json()
+    assert read.json()["stt_model_version"]
+    assert removed_update.status_code == 405
     assert ota.status_code == 200
 
 

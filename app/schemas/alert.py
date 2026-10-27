@@ -522,6 +522,8 @@ class AlertResponse(BaseModel):
     push_status: Optional[
         Literal["pending", "accepted", "partial", "rejected", "failed", "skipped"]
     ] = None
+    # Stored but not pushed because it happened outside the school's hours.
+    outside_school_hours: bool = False
     confidence: Optional[float] = None
     duration: Optional[float] = None
     location: Optional[str] = None

@@ -168,6 +168,8 @@ class Alert(Base):
     post_trigger_seconds = Column(Float, nullable=True)
     trigger_timestamp = Column(DateTime(timezone=True), nullable=True)
     test_mode = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Stored but not pushed: the event happened outside the school's configured hours.
+    outside_school_hours = Column(Boolean, nullable=False, default=False, server_default="false")
     delivery_status = Column(String(20), nullable=False, default="stored", server_default="stored")
     request_fingerprint = Column(String(64), nullable=True)
     push_status = Column(

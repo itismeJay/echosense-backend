@@ -36,6 +36,7 @@ from app.services.audit import (
     record_audit_event,
 )
 from app.services.school_access import scope_alert_query
+from app.services.school_settings import decide_push, get_school_settings
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
 
@@ -352,6 +353,25 @@ async def create_alert(
         select(Alert).where(Alert.id == new_alert.id).options(*alert_load_options())
     )
     new_alert = result.scalar_one()
+
+    if new_alert.school_id is not None:
+        school_settings = await get_school_settings(db, new_alert.school_id)
+        decision = decide_push(
+            school_settings,
+            new_alert.severity,
+            new_alert.event_start_timestamp
+            or new_alert.trigger_timestamp
+            or datetime.now(timezone.utc),
+        )
+    else:
+        decision = None
+    if decision is not None and not decision.send:
+        # Stored and visible on the dashboard, but nobody's phone is woken for it.
+        new_alert.push_status = "skipped"
+        new_alert.push_last_error = decision.reason
+        new_alert.outside_school_hours = decision.outside_school_hours
+        await db.commit()
+        return hydrate_alert(new_alert)
 
     recipients = await resolve_notification_recipients(db, school_id=new_alert.school_id)
     if not recipients.controlled_test_mode or recipients.failure_reason is None:

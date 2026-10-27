@@ -1,7 +1,8 @@
 """Every route a role must not use returns 403 for that role's token.
 
 Mirrors the role matrix: super admin sees everything; a school admin manages one school but
-not schools, global settings or monitored terms; counselors get alerts, history, the
+not schools, global settings or global monitored terms (only their own school's settings);
+counselors get alerts, history, the
 counselor overview and reports; staff get alerts and history only.
 """
 
@@ -19,7 +20,7 @@ SUPER_ADMIN_ONLY = [
     ("POST", "/schools"),
     ("GET", f"/schools/{ANY_UUID}"),
     ("PATCH", f"/schools/{ANY_UUID}"),
-    ("PUT", "/system-settings/"),
+    ("GET", "/system-settings/"),
     ("POST", "/system-settings/ota-push"),
     ("POST", "/dictionary/"),
     ("DELETE", "/dictionary/1"),
@@ -34,11 +35,20 @@ ADMIN_ONLY = [
     ("GET", "/users/"),
     ("POST", "/users/"),
     ("DELETE", "/users/1"),
-    ("GET", "/system-settings/"),
     ("GET", "/dictionary/"),
     ("GET", "/audit-logs"),
     ("GET", "/audit-logs/export"),
     ("GET", "/system/logs"),
+]
+
+# One school's settings: its admins (and a super admin inside that school) only.
+SCHOOL_SETTINGS = [
+    ("GET", "/school-settings"),
+    ("PATCH", "/school-settings"),
+    ("GET", "/school-settings/terms"),
+    ("POST", "/school-settings/terms"),
+    ("DELETE", "/school-settings/terms/1"),
+    ("PUT", "/school-settings/global-terms/1"),
 ]
 
 REPORTS = [
@@ -59,14 +69,16 @@ EVERYONE = [
 
 FORBIDDEN = {
     "admin_a": SUPER_ADMIN_ONLY,
-    "counselor_a": SUPER_ADMIN_ONLY + ADMIN_ONLY,
-    "staff_a": SUPER_ADMIN_ONLY + ADMIN_ONLY + REPORTS,
+    "counselor_a": SUPER_ADMIN_ONLY + ADMIN_ONLY + SCHOOL_SETTINGS,
+    "staff_a": SUPER_ADMIN_ONLY + ADMIN_ONLY + SCHOOL_SETTINGS + REPORTS,
 }
 
 ALLOWED_READS = {
     "super": [route for route in SUPER_ADMIN_ONLY + ADMIN_ONLY + REPORTS + EVERYONE
               if route[0] == "GET" and "/schools/" not in route[1]],
-    "admin_a": [route for route in ADMIN_ONLY + REPORTS + EVERYONE if route[0] == "GET"],
+    "admin_a": [
+        route for route in ADMIN_ONLY + SCHOOL_SETTINGS + REPORTS + EVERYONE if route[0] == "GET"
+    ],
     "counselor_a": [route for route in REPORTS + EVERYONE if route[0] == "GET"],
     "staff_a": EVERYONE,
 }

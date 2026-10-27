@@ -7,7 +7,7 @@ from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
 from app.routers import classrooms, devices, schools
 from app.routers import dictionary, system_settings, audit_logs, reports
-from app.routers import system_logs
+from app.routers import school_settings, system_logs
 from app.config import (
     CORS_ALLOWED_HEADERS,
     CORS_ALLOWED_METHODS,
@@ -24,6 +24,7 @@ import app.models.report  # noqa: F401
 import app.models.edge_device  # noqa: F401
 import app.models.classroom  # noqa: F401
 import app.models.school  # noqa: F401
+import app.models.school_settings  # noqa: F401
 
 # Legacy startup maintenance is retained temporarily for the older non-Alembic
 # tables. Deployments using the Alembic schema should disable it with
@@ -137,6 +138,7 @@ app.include_router(system_logs.router)
 app.include_router(devices.router)
 app.include_router(classrooms.router)
 app.include_router(schools.router)
+app.include_router(school_settings.router)
 
 
 def required_ingest_header_openapi():

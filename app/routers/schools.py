@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.alert import Alert
 from app.models.edge_device import EdgeDevice
 from app.models.school import School
+from app.models.school_settings import SchoolSettings
 from app.models.user import User
 from app.routers.auth import require_super_admin
 from app.schemas.school import (
@@ -54,6 +55,8 @@ async def create_school(
     school = School(name=body.name)
     db.add(school)
     try:
+        await db.flush()
+        db.add(SchoolSettings(school_id=school.id))
         await db.flush()
         await record_audit_event(
             db,
