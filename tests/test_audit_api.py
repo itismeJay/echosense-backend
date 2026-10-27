@@ -161,7 +161,7 @@ async def test_user_create_delete_are_atomic_and_actor_snapshot_survives(
     assert all(event.actor_user_id == identities["admin"]["id"] for event in events)
     assert all(event.actor_email == identities["admin"]["email"] for event in events)
     assert events[0].resource_id == user_id
-    assert events[0].metadata_json == {"role": "staff"}
+    assert events[0].metadata_json == {"role": "staff", "is_super_admin": False}
     assert events[1].target == "temporary.teacher@school.test"
 
 

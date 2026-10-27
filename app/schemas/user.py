@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 # Deliberately simple: one "@", no whitespace, and a dotted domain. EmailStr is not used
@@ -57,7 +57,8 @@ class RegisterRequest(BaseModel):
     password: str
     role: Literal["admin", "staff", "counselor"] = "staff"
     school_id: UUID | None = None
-    is_super_admin: bool = False
+    # Strict: only a JSON true creates a super admin, never "true", 1 or "on".
+    is_super_admin: StrictBool = False
 
     @field_validator("email")
     @classmethod
@@ -76,6 +77,8 @@ class RegisterRequest(BaseModel):
     def validate_super_admin_role(self):
         if self.is_super_admin and self.role != "admin":
             raise ValueError("is_super_admin requires role=admin")
+        if self.is_super_admin and self.school_id is not None:
+            raise ValueError("a super admin cannot belong to a school")
         return self
 
 

@@ -47,12 +47,38 @@ async def resolve_new_user_scope(
     body: RegisterRequest,
     current_user: User,
     db: AsyncSession,
+    scope_school_id: UUID | None = None,
 ) -> tuple[UUID | None, bool]:
-    if body.is_super_admin and not is_global_admin(current_user):
+    """The school and super-admin flag for a new account.
+
+    `scope_school_id` is the school a super admin has entered (the ?school_id query the
+    dashboard adds to every request). Inside a school, the new account always belongs to
+    that school and can never be a super admin.
+    """
+
+    if body.is_super_admin is not True:
+        is_super_admin = False
+    elif not is_global_admin(current_user):
         raise HTTPException(status_code=403, detail="Super-admin access required")
+    elif scope_school_id is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="A super admin cannot be created inside a school",
+        )
+    else:
+        is_super_admin = True
     if is_global_admin(current_user):
-        school_id = body.school_id
-        if school_id is None and not body.is_super_admin:
+        if (
+            scope_school_id is not None
+            and body.school_id is not None
+            and body.school_id != scope_school_id
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="school_id does not match the school you are viewing",
+            )
+        school_id = body.school_id or scope_school_id
+        if school_id is None and not is_super_admin:
             raise HTTPException(
                 status_code=422,
                 detail="school_id is required for users who are not super admins",
@@ -60,8 +86,9 @@ async def resolve_new_user_scope(
     else:
         if current_user.school_id is None:
             raise HTTPException(status_code=403, detail="Administrator is not assigned to a school")
-        if body.school_id is not None and body.school_id != current_user.school_id:
-            raise HTTPException(status_code=403, detail="School access denied")
+        for requested in (body.school_id, scope_school_id):
+            if requested is not None and requested != current_user.school_id:
+                raise HTTPException(status_code=403, detail="School access denied")
         school_id = current_user.school_id
     if school_id is not None:
         school = await db.get(School, school_id)
@@ -69,7 +96,7 @@ async def resolve_new_user_scope(
             raise HTTPException(status_code=404, detail="School not found")
         if not school.is_active:
             raise HTTPException(status_code=409, detail="School is inactive")
-    return school_id, body.is_super_admin
+    return school_id, is_super_admin
 
 
 async def find_user_by_email(db: AsyncSession, email: str) -> User | None:
@@ -89,6 +116,7 @@ async def create_user_account(
     body: RegisterRequest,
     db: AsyncSession,
     current_user: User,
+    scope_school_id: UUID | None = None,
 ) -> UserOut:
     existing = await db.execute(
         select(User.id).where(func.lower(User.email) == body.email).limit(1)
@@ -96,7 +124,9 @@ async def create_user_account(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    school_id, is_super_admin = await resolve_new_user_scope(body, current_user, db)
+    school_id, is_super_admin = await resolve_new_user_scope(
+        body, current_user, db, scope_school_id
+    )
 
     user = User(
         email=body.email,
@@ -122,7 +152,7 @@ async def create_user_account(
         resource_id=user.id,
         target=user.email,
         description="Administrator created a user account.",
-        metadata={"role": user.role},
+        metadata={"role": user.role, "is_super_admin": user.is_super_admin},
         school_id=user.school_id,
     )
     await db.commit()
@@ -367,7 +397,8 @@ async def change_password(
 async def register(
     request: Request,
     body: RegisterRequest,
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return await create_user_account(request, body, db, current_user)
+    return await create_user_account(request, body, db, current_user, school_id)

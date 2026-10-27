@@ -117,10 +117,11 @@ async def save_push_token(
 async def create_user(
     request: Request,
     body: RegisterRequest,
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return await create_user_account(request, body, db, current_user)
+    return await create_user_account(request, body, db, current_user, school_id)
 
 
 @router.get("", response_model=List[UserOut], include_in_schema=False)
