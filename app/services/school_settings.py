@@ -160,6 +160,22 @@ async def effective_terms(db: AsyncSession, school_id: UUID) -> list[dict]:
     return terms
 
 
+async def disabled_global_term_texts(db: AsyncSession, school_id: UUID) -> list[str]:
+    """The global words this school turned off.
+
+    Sent to the edge, which also holds many of them in its built-in word lists: leaving
+    them out of `terms` alone would not stop the device from alerting on them.
+    """
+
+    result = await db.execute(
+        select(SlurEntry.slur_text)
+        .join(SchoolDisabledTerm, SchoolDisabledTerm.term_id == SlurEntry.term_id)
+        .where(SchoolDisabledTerm.school_id == school_id)
+        .order_by(SlurEntry.term_id)
+    )
+    return list(result.scalars().all())
+
+
 def config_version(payload: dict) -> str:
     """A stable hash of the device config so the edge can skip reloading unchanged config."""
 

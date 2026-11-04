@@ -511,6 +511,8 @@ async def test_device_config_returns_the_schools_effective_words(client, identit
             "term_id": added.json()["id"],
         },
     ]
+    assert before.json()["disabled_terms"] == []
+    assert body["disabled_terms"] == ["global off"]
     assert len(body["config_version"]) == 64
     assert body["config_version"] != before.json()["config_version"]
     again = await client.get("/devices/me/config")

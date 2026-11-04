@@ -32,7 +32,12 @@ from app.services.audit import (
 )
 from app.schemas.school_settings import DeviceConfigOut
 from app.services.device_auth import authenticate_edge_device, hash_device_key
-from app.services.school_settings import config_version, effective_terms, get_school_settings
+from app.services.school_settings import (
+    config_version,
+    disabled_global_term_texts,
+    effective_terms,
+    get_school_settings,
+)
 from app.services.device_status import ONLINE_WINDOW_SECONDS, is_device_online
 from app.services.school_access import (
     is_global_admin,
@@ -293,20 +298,27 @@ async def get_my_device_config(
     """The effective detection config for the calling device's school.
 
     terms = global dictionary minus the school's disabled terms, plus the school's own
-    terms. config_version changes whenever terms or sensitivity change.
+    terms; disabled_terms lists the global words the school turned off. config_version
+    changes whenever terms, disabled terms or sensitivity change.
     """
 
     if device.school_id is None:
         raise HTTPException(status_code=409, detail="Device is not assigned to a school")
     settings = await get_school_settings(db, device.school_id)
     terms = await effective_terms(db, device.school_id)
+    disabled_terms = await disabled_global_term_texts(db, device.school_id)
     await db.commit()
-    versioned = {"sensitivity": settings.sensitivity, "terms": terms}
+    versioned = {
+        "sensitivity": settings.sensitivity,
+        "terms": terms,
+        "disabled_terms": disabled_terms,
+    }
     return DeviceConfigOut(
         device_code=device.device_code,
         school_id=device.school_id,
         sensitivity=settings.sensitivity,
         terms=terms,
+        disabled_terms=disabled_terms,
         config_version=config_version(versioned),
         generated_at=datetime.now(timezone.utc),
     )

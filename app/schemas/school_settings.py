@@ -117,5 +117,8 @@ class DeviceConfigOut(BaseModel):
     school_id: UUID
     sensitivity: Sensitivity
     terms: list[DeviceConfigTerm]
+    # Global words this school turned off. The edge drops them even when its own
+    # built-in lists contain them.
+    disabled_terms: list[str] = []
     config_version: str
     generated_at: datetime
