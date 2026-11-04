@@ -70,6 +70,7 @@ from app.database import AsyncSessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.edge_device import EdgeDevice  # noqa: E402
 from app.models.classroom import Classroom  # noqa: E402
+from app.models.classroom_teacher import ClassroomTeacher  # noqa: E402
 from app.models.school import School  # noqa: E402
 from app.models.system_settings import SystemSettings  # noqa: E402
 from app.models.user import User  # noqa: E402
@@ -186,6 +187,14 @@ async def identities():
             for role in ("admin", "staff", "counselor")
         }
         session.add_all(users.values())
+        await session.flush()
+        # Teachers see only their rooms' alerts: the school's teacher teaches the test room.
+        classroom = await session.scalar(select(Classroom).where(Classroom.school_id == school.id))
+        session.add(
+            ClassroomTeacher(
+                user_id=users["staff"].id, classroom_id=classroom.id, school_id=school.id
+            )
+        )
         await session.commit()
         for user in users.values():
             await session.refresh(user)
@@ -280,6 +289,16 @@ async def org_identities():
             for key, (role, school_id, is_super_admin) in specs.items()
         }
         session.add_all(users.values())
+        await session.flush()
+        # School A's teacher teaches the test room (where the test device is).
+        classroom_a = await session.scalar(
+            select(Classroom).where(Classroom.school_id == school_a.id)
+        )
+        session.add(
+            ClassroomTeacher(
+                user_id=users["staff_a"].id, classroom_id=classroom_a.id, school_id=school_a.id
+            )
+        )
         await session.commit()
         for user in users.values():
             await session.refresh(user)

@@ -52,6 +52,11 @@ class ClassroomDeviceSummary(BaseModel):
     is_active: bool
 
 
+class ClassroomTeacherSummary(BaseModel):
+    id: str
+    email: str
+
+
 class ClassroomResponse(BaseModel):
     id: UUID
     school_id: UUID
@@ -61,3 +66,4 @@ class ClassroomResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     devices: list[ClassroomDeviceSummary] = Field(default_factory=list)
+    teachers: list[ClassroomTeacherSummary] = Field(default_factory=list)

@@ -56,7 +56,9 @@ async def _add_users(*tokens: str | None) -> list[User]:
             User(
                 email=f"notification-user-{index}@example.test",
                 hashed_password="synthetic-hash",
-                role="admin" if index == 1 else "staff",
+                # School-wide recipients; teachers get only their rooms' alerts
+                # (tests/test_room_alerts.py).
+                role="admin" if index == 1 else "counselor",
                 push_token=token,
                 school_id=school_id,
             )

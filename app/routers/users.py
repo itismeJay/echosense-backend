@@ -7,19 +7,24 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.user import (
     NotificationRecipientAudit,
+    PasswordResetResponse,
     ProviderTestDryRunRequest,
     ProviderTestDryRunResponse,
     ProviderTestSendRequest,
     ProviderTestSendResponse,
     PushTokenRequest,
     RegisterRequest,
+    TeacherClassroomsUpdate,
     UserOut,
 )
 from app.routers.auth import (
     create_user_account,
     get_current_user,
+    pwd_context,
     require_admin,
 )
+from app.services.classroom_teachers import classroom_ids_by_user, set_teacher_classrooms
+from app.services.temporary_password import generate_temporary_password
 from app.services.notification_recipients import resolve_notification_recipients
 from app.notifications.push import (
     PROVIDER_TEST_DATA_KEYS,
@@ -137,8 +142,107 @@ async def get_users(
     scoped = resolve_school_scope(current_user, school_id)
     if scoped is not None:
         query = query.where(User.school_id == scoped)
-    result = await db.execute(query)
-    return [UserOut.model_validate(user) for user in result.scalars().all()]
+    users = list((await db.execute(query)).scalars().all())
+    rooms = await classroom_ids_by_user(db, [user.id for user in users])
+    return [_user_out(user, rooms.get(user.id)) for user in users]
+
+
+def _user_out(user: User, classroom_ids=None) -> UserOut:
+    out = UserOut.model_validate(user)
+    out.classroom_ids = list(classroom_ids or [])
+    return out
+
+
+async def _managed_user(db: AsyncSession, current_user: User, user_id: int) -> User:
+    """A user the administrator may manage: never a super admin, always their school."""
+
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.is_super_admin:
+        raise HTTPException(
+            status_code=403, detail="A super admin's account cannot be changed here"
+        )
+    if not is_global_admin(current_user) and (
+        current_user.school_id is None or user.school_id != current_user.school_id
+    ):
+        raise HTTPException(status_code=403, detail="School access denied")
+    return user
+
+
+@router.put("/{user_id}/classrooms", response_model=UserOut)
+async def set_user_classrooms(
+    request: Request,
+    user_id: int,
+    body: TeacherClassroomsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Replace the classrooms a teacher sees and is pushed alerts for."""
+
+    user = await _managed_user(db, current_user, user_id)
+    added, removed = await set_teacher_classrooms(db, user, body.classroom_ids)
+    if added or removed:
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.ASSIGN_TEACHER_CLASSROOMS,
+            AuditResource.USER,
+            AuditStatus.SUCCESS,
+            actor=current_user,
+            resource_id=user.id,
+            target=user.email,
+            description="Administrator changed a teacher's classrooms.",
+            metadata={
+                "added_classroom_ids": [str(item) for item in added],
+                "removed_classroom_ids": [str(item) for item in removed],
+            },
+            school_id=user.school_id,
+        )
+    await db.commit()
+    rooms = await classroom_ids_by_user(db, [user.id])
+    return _user_out(user, rooms.get(user.id))
+
+
+@router.post("/{user_id}/reset-password", response_model=PasswordResetResponse)
+async def reset_user_password(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Set a temporary password; the person must choose a new one at next sign-in.
+
+    The temporary password is returned once and never stored or logged in plain text.
+    """
+
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=400, detail="Use Change password to change your own password"
+        )
+    user = await _managed_user(db, current_user, user_id)
+    temporary_password = generate_temporary_password()
+    user.hashed_password = pwd_context.hash(temporary_password)
+    user.must_change_password = True
+    await record_audit_event(
+        db,
+        request,
+        AuditAction.RESET_PASSWORD,
+        AuditResource.USER,
+        AuditStatus.SUCCESS,
+        actor=current_user,
+        resource_id=user.id,
+        target=user.email,
+        description="Administrator reset a user's password to a temporary one.",
+        metadata={"role": user.role},
+        school_id=user.school_id,
+    )
+    await db.commit()
+    await db.refresh(user)
+    rooms = await classroom_ids_by_user(db, [user.id])
+    return PasswordResetResponse(
+        user=_user_out(user, rooms.get(user.id)), temporary_password=temporary_password
+    )
 
 
 @router.get(

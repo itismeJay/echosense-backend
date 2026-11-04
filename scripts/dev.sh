@@ -31,8 +31,8 @@ else
 fi
 
 migration="$("$repository_root/$virtualenv_dir/bin/alembic" current | awk 'NR == 1 {print $1}')"
-if [[ "$migration" != "20261105_0016" ]]; then
-  echo "Local database migration is $migration; expected 20261105_0016." >&2
+if [[ "$migration" != "20261105_0017" ]]; then
+  echo "Local database migration is $migration; expected 20261105_0017." >&2
   echo "Run: ./scripts/local_db.sh up" >&2
   exit 1
 fi

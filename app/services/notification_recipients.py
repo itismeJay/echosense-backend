@@ -3,11 +3,13 @@ from dataclasses import dataclass
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.classroom_teacher import ClassroomTeacher
 from app.models.user import User
+from app.services.school_access import ROOM_SCOPED_ROLES
 from app.notifications.tokens import (
     is_structurally_valid_push_token,
     normalize_push_token,
@@ -193,16 +195,39 @@ def _log_selection(selection: RecipientSelection) -> None:
     )
 
 
+def _room_recipients(query, classroom_id: UUID | None):
+    """Teachers only for their assigned classroom; everyone else in the school as before."""
+
+    assigned_teachers = select(ClassroomTeacher.user_id).where(
+        ClassroomTeacher.classroom_id == classroom_id
+    )
+    if classroom_id is None:
+        return query.where(User.role.notin_(ROOM_SCOPED_ROLES))
+    return query.where(or_(User.role.notin_(ROOM_SCOPED_ROLES), User.id.in_(assigned_teachers)))
+
+
 async def resolve_notification_recipients(
     db: AsyncSession,
     *,
     school_id: UUID | None = None,
+    for_alert: bool = False,
+    classroom_id: UUID | None = None,
     emit_log: bool = True,
 ) -> RecipientSelection:
+    """Who receives a push.
+
+    For an alert (``for_alert``): the school's admins and counselors, plus the teachers
+    assigned to the alert's classroom. Without ``for_alert`` (diagnostics, provider
+    tests) every user of the school with a token is selected, as before. Controlled test
+    mode always targets its one configured user.
+    """
+
     if not settings.ECHOSENSE_CONTROLLED_TEST_MODE:
         query = select(User).where(User.push_token.isnot(None))
         if school_id is not None:
             query = query.where(User.school_id == school_id)
+        if for_alert:
+            query = _room_recipients(query, classroom_id)
         result = await db.execute(query)
         users = list(result.scalars().all())
         tokens: list[str] = []

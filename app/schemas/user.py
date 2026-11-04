@@ -45,11 +45,27 @@ class UserOut(BaseModel):
     school_id: UUID | None = None
     is_super_admin: bool = False
     must_change_password: bool = False
+    # Teachers only: the classrooms whose alerts they see and are pushed. Filled in by
+    # the People list and the assignment endpoint; other responses leave it empty.
+    classroom_ids: list[UUID] = Field(default_factory=list)
 
     @field_validator("id", mode="before")
     @classmethod
     def stringify_id(cls, value) -> str:
         return str(value)
+
+
+class TeacherClassroomsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    classroom_ids: list[UUID] = Field(max_length=200)
+
+
+class PasswordResetResponse(BaseModel):
+    """Shown once to the administrator; the person must change it at next sign-in."""
+
+    user: UserOut
+    temporary_password: str
 
 
 class RegisterRequest(BaseModel):

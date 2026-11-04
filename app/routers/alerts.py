@@ -427,7 +427,12 @@ async def create_alert(
         await db.commit()
         return hydrate_alert(new_alert)
 
-    recipients = await resolve_notification_recipients(db, school_id=new_alert.school_id)
+    recipients = await resolve_notification_recipients(
+        db,
+        school_id=new_alert.school_id,
+        for_alert=True,
+        classroom_id=new_alert.classroom_id,
+    )
     if not recipients.controlled_test_mode or recipients.failure_reason is None:
         asyncio.create_task(
             send_expo_pushes(

@@ -19,12 +19,15 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
+from app.services.classroom_teachers import teachers_by_classroom
 from app.services.school_access import is_global_admin, require_school_access
 
 router = APIRouter(prefix="/classrooms", tags=["Classrooms"])
 
 
-def _classroom_response(classroom: Classroom) -> ClassroomResponse:
+def _classroom_response(
+    classroom: Classroom, teachers: list[dict] | None = None
+) -> ClassroomResponse:
     return ClassroomResponse(
         id=classroom.id,
         school_id=classroom.school_id,
@@ -42,7 +45,13 @@ def _classroom_response(classroom: Classroom) -> ClassroomResponse:
             }
             for device in sorted(classroom.devices, key=lambda item: item.device_code)
         ],
+        teachers=teachers or [],
     )
+
+
+async def _respond(db: AsyncSession, classroom: Classroom) -> ClassroomResponse:
+    teachers = await teachers_by_classroom(db, [classroom.id])
+    return _classroom_response(classroom, teachers.get(classroom.id))
 
 
 async def _get_classroom(
@@ -105,7 +114,7 @@ async def create_classroom(
             status_code=409,
             detail="Classroom name already exists in this school",
         ) from exc
-    return _classroom_response(await _get_classroom(classroom.id, db, current_user))
+    return await _respond(db, await _get_classroom(classroom.id, db, current_user))
 
 
 @router.get("/", response_model=list[ClassroomResponse], include_in_schema=False)
@@ -129,7 +138,8 @@ async def list_classrooms(
     if is_active is not None:
         query = query.where(Classroom.is_active == is_active)
     classrooms = list((await db.execute(query)).scalars().unique().all())
-    return [_classroom_response(classroom) for classroom in classrooms]
+    teachers = await teachers_by_classroom(db, [classroom.id for classroom in classrooms])
+    return [_classroom_response(classroom, teachers.get(classroom.id)) for classroom in classrooms]
 
 
 @router.get("/{classroom_id}", response_model=ClassroomResponse)
@@ -138,7 +148,7 @@ async def read_classroom(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return _classroom_response(await _get_classroom(classroom_id, db, current_user))
+    return await _respond(db, await _get_classroom(classroom_id, db, current_user))
 
 
 @router.patch("/{classroom_id}", response_model=ClassroomResponse)
@@ -175,4 +185,4 @@ async def update_classroom(
             status_code=409,
             detail="Classroom name already exists in this school",
         ) from exc
-    return _classroom_response(await _get_classroom(classroom.id, db, current_user))
+    return await _respond(db, await _get_classroom(classroom.id, db, current_user))

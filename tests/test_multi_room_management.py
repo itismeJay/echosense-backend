@@ -6,6 +6,7 @@ import pytest
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
 from app.models.classroom import Classroom
+from app.models.classroom_teacher import ClassroomTeacher
 from app.models.edge_device import EdgeDevice
 from app.models.school import School
 from app.models.user import User
@@ -87,6 +88,18 @@ async def _create_school_context() -> dict:
             ),
         }
         session.add_all(users.values())
+        await session.flush()
+        # Each school's teacher teaches its first room.
+        session.add_all(
+            [
+                ClassroomTeacher(
+                    user_id=users["alpha_staff"].id, classroom_id=a101.id, school_id=alpha.id
+                ),
+                ClassroomTeacher(
+                    user_id=users["beta_staff"].id, classroom_id=b201.id, school_id=beta.id
+                ),
+            ]
+        )
         await session.commit()
         return {
             "alpha": alpha.id,
