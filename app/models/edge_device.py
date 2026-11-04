@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     String,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -42,8 +43,21 @@ class EdgeDevice(Base):
         nullable=True,
     )
     classroom_id = Column(UUID(as_uuid=True), nullable=True)
-    api_key_hash = Column(String(255), nullable=False)
+    # NULL until a claimed box activates (QR setup) or after a removal/reset.
+    api_key_hash = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # QR setup lifecycle: unclaimed (provisioned, no school) -> claimed (in a classroom,
+    # waiting for the box) -> active (box holds its key). Disabled is is_active=False.
+    claim_state = Column(String(20), nullable=False, default="active", server_default="active")
+    claim_code_hash = Column(String(255), nullable=True)
+    box_secret_hash = Column(String(128), nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    claimed_by = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_edge_devices_claimed_by_users"),
+        nullable=True,
+    )
+    activated_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -84,3 +98,13 @@ class EdgeDevice(Base):
     @property
     def assignment_state(self) -> str:
         return "assigned" if self.classroom_id is not None else "unassigned"
+
+    @property
+    def status(self) -> str:
+        """unclaimed | claimed | active | disabled | removed (unclaimed, needs a reset)."""
+
+        if not self.is_active:
+            return "disabled"
+        if self.claim_state == "unclaimed":
+            return "unclaimed" if self.claim_code_hash else "removed"
+        return self.claim_state

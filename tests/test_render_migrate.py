@@ -447,7 +447,9 @@ def test_edge_device_migration_preserves_historical_alerts_and_downgrades(
         ).one()
 
     assert device_columns["id"]["nullable"] is False
-    assert device_columns["api_key_hash"]["nullable"] is False
+    # Since 0018 (QR setup) unclaimed and waiting boxes have no key yet; key auth still
+    # requires claim_state='active', which a check constraint ties to a non-null key.
+    assert device_columns["api_key_hash"]["nullable"] is True
     assert alert_columns["edge_device_id"]["nullable"] is True
     assert any(
         foreign_key["constrained_columns"] == ["edge_device_id"]
