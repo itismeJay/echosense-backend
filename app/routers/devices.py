@@ -184,6 +184,7 @@ async def create_device(
         legacy_school_name=school.name,
         assigned_at=datetime.now(timezone.utc) if classroom is not None else None,
         api_key_hash=hash_device_key(device_key),
+        claim_state="active",
     )
     db.add(device)
     try:
@@ -282,6 +283,7 @@ async def device_status(
                 classroom_id=device.classroom_id,
                 classroom_name=device.classroom.name if device.classroom else None,
                 is_active=device.is_active,
+                status=device.status,
                 last_seen_at=device.last_seen_at,
                 online=device.is_active and is_device_online(device.last_seen_at, now),
             )
@@ -511,11 +513,19 @@ async def rotate_device_key(
     current_user: User = Depends(require_admin),
 ):
     device = await _get_device(device_id, db, current_user, for_update=True)
+    if device.claim_state == "unclaimed":
+        raise HTTPException(status_code=409, detail="Add this box to a classroom first")
     device_key = _generate_device_key()
     now = datetime.now(timezone.utc)
     device.api_key_hash = hash_device_key(device_key)
     device.key_rotated_at = now
     device.updated_at = now
+    if device.claim_state != "active":
+        # Advanced/manual setup of a claimed box: the typed key replaces QR activation.
+        device.claim_state = "active"
+        device.claim_code_hash = None
+        device.box_secret_hash = None
+        device.activated_at = now
     await record_audit_event(
         db,
         request,

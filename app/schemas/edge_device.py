@@ -6,6 +6,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEVICE_KEY_WARNING = "Store this key securely. It will not be shown again."
+# unclaimed: provisioned, ready to add. claimed: in a room, waiting for the box.
+# active: the box holds its key. disabled: switched off. removed: needs a super-admin reset.
+DeviceLifecycleStatus = Literal["unclaimed", "claimed", "active", "disabled", "removed"]
 DEVICE_CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{2,99}$")
 
 
@@ -105,6 +108,9 @@ class EdgeDeviceResponse(BaseModel):
     classroom_name: str | None
     assignment_state: Literal["assigned", "unassigned"]
     is_active: bool
+    status: DeviceLifecycleStatus = "active"
+    claimed_at: datetime | None = None
+    activated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     last_seen_at: datetime | None
@@ -132,6 +138,7 @@ class DeviceStatusItem(BaseModel):
     classroom_id: UUID | None
     classroom_name: str | None
     is_active: bool
+    status: DeviceLifecycleStatus = "active"
     last_seen_at: datetime | None
     online: bool
 

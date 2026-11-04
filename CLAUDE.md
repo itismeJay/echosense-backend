@@ -61,3 +61,15 @@ generated temporary password, returned once, with `must_change_password=true` (a
 
 **Device config**: `GET /devices/me/config` also lists `disabled_terms` (the school's turned-off
 global words), so the edge can drop them from its built-in lists too.
+
+**QR device setup** (`app/routers/device_claims.py`, migration 0018): `claim_state` is
+unclaimed → claimed → active (disabled = `is_active=false`; `status` also reports `removed`).
+`POST /devices/provision` (super admin) makes unclaimed boxes and returns each box's setup code,
+box secret and QR payload (`echosense://claim?d=<code>&c=<setup code>`) once; only hashes are
+stored. `POST /classrooms/{id}/devices/claim` (school admin, or super admin) binds a box to the
+room. `POST /devices/activate` (the box, no auth header) needs device code + setup code + box
+secret; it answers 202 waiting until claimed, then mints the device key, returns it once and
+clears both codes. `/devices/{id}/move` (same school only), `/remove` (revokes the key, detaches;
+needs a super-admin `/reset` before reuse) and `/reset` (new codes, key revoked) are audited.
+Wrong codes are throttled per device, user and IP (`DEVICE_CLAIM_*` settings).
+Key auth (`authenticate_edge_device`) accepts only `claim_state='active'` devices.

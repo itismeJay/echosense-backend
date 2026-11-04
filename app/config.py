@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     LOGIN_MAX_FAILURES_PER_ACCOUNT: int = 5
     LOGIN_MAX_FAILURES_PER_IP: int = 30
     LOGIN_FAILURE_WINDOW_SECONDS: int = 900
+    # Wrong QR setup codes allowed per window before claim/activate answer 429.
+    DEVICE_CLAIM_RATE_LIMIT_ENABLED: bool = True
+    DEVICE_CLAIM_MAX_FAILURES_PER_DEVICE: int = 5
+    DEVICE_CLAIM_MAX_FAILURES_PER_USER: int = 10
+    DEVICE_CLAIM_MAX_FAILURES_PER_IP: int = 30
+    DEVICE_CLAIM_FAILURE_WINDOW_SECONDS: int = 900
     SQL_ECHO: bool = False
     TESTING: bool = False
 

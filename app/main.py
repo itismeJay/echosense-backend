@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
-from app.routers import classrooms, devices, schools
+from app.routers import classrooms, device_claims, devices, schools
 from app.routers import dictionary, system_settings, audit_logs, reports
 from app.routers import school_settings, system_logs
 from app.config import (
@@ -135,6 +135,8 @@ app.include_router(system_settings.router)
 app.include_router(audit_logs.router)
 app.include_router(reports.router)
 app.include_router(system_logs.router)
+# Before devices.router so /devices/provision and /devices/activate never meet /{device_id}.
+app.include_router(device_claims.router)
 app.include_router(devices.router)
 app.include_router(classrooms.router)
 app.include_router(schools.router)

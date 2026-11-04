@@ -56,6 +56,10 @@ async def authenticate_edge_device(
     if device is None:
         verify_device_key(device_key, _DUMMY_DEVICE_KEY_HASH)
         raise _credential_error()
+    if device.api_key_hash is None or device.claim_state != "active":
+        # Unclaimed, waiting or removed boxes have no key; same answer as a wrong key.
+        verify_device_key(device_key, _DUMMY_DEVICE_KEY_HASH)
+        raise _credential_error()
     if not device.is_active:
         raise _credential_error(status_code=403)
     if not verify_device_key(device_key, device.api_key_hash):
