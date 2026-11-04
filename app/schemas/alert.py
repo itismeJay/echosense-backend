@@ -207,18 +207,62 @@ def normalize_term(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).strip().casefold().split())
 
 
-class MatchedTermCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+DICTIONARY_LANGUAGE_VALUES = frozenset(code.value for code in DictionaryLanguageCode)
 
-    term_id: Optional[int] = Field(default=None, gt=0)
+
+class MatchedTermCreate(BaseModel):
+    """One term the device matched.
+
+    Deliberately lenient: a real alert must never be rejected because the device's
+    evidence disagrees with the backend dictionary. Unknown languages are dropped, and
+    the router stores terms the dictionary does not hold as "unlisted".
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    term_id: Optional[int] = None
     term: Optional[str] = Field(
         default=None,
-        min_length=1,
-        max_length=100,
         validation_alias=AliasChoices("term", "matched_text"),
     )
     language: Optional[DictionaryLanguageCode] = None
-    match_type: str = Field(default="exact", min_length=1, max_length=30)
+    match_type: str = "exact"
+    # "school" means term_id is a school_terms id (from /devices/me/config).
+    source: Optional[str] = None
+
+    @field_validator("term_id", mode="before")
+    @classmethod
+    def ignore_invalid_term_id(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            return None
+        return value
+
+    @field_validator("term", mode="before")
+    @classmethod
+    def clean_term(cls, value):
+        if value is None:
+            return None
+        text = " ".join(str(value).split())
+        # Stored in a 100-character column; a longer phrase is kept, truncated.
+        return text[:100] or None
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def ignore_unknown_language(cls, value):
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in DICTIONARY_LANGUAGE_VALUES else None
+
+    @field_validator("match_type", mode="before")
+    @classmethod
+    def clean_match_type(cls, value):
+        text = str(value or "").strip()[:30]
+        return text or "exact"
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def clean_source(cls, value):
+        text = str(value or "").strip().lower()[:30]
+        return text or None
 
     @model_validator(mode="after")
     def require_term_identifier(self):
@@ -228,12 +272,29 @@ class MatchedTermCreate(BaseModel):
 
 
 class MatchedTermResponse(BaseModel):
+    """A matched term linked to the global dictionary (unchanged contract)."""
+
     model_config = ConfigDict(from_attributes=True)
 
     term_id: int
     term: str
     language: DictionaryLanguageCode
     match_type: str
+
+
+class UnlistedTermResponse(BaseModel):
+    """A matched term the global dictionary does not hold.
+
+    source is "school" (one school's own word) or "unlisted" (stored as the device sent it).
+    Kept out of matched_terms so older clients, which require term_id there, keep working.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    term: str
+    language: Optional[DictionaryLanguageCode] = None
+    match_type: str
+    source: str
 
 
 class AlertCreate(BaseModel):
@@ -459,19 +520,6 @@ class AlertCreate(BaseModel):
         self.yamnet_class = label
         return self
 
-    @model_validator(mode="after")
-    def reject_duplicate_matched_terms(self):
-        identifiers: set[tuple[str, object]] = set()
-        for matched_term in self.matched_terms:
-            if matched_term.term_id is not None:
-                identifier = ("id", matched_term.term_id)
-            else:
-                identifier = ("term", normalize_term(matched_term.term or ""))
-            if identifier in identifiers:
-                raise ValueError("matched_terms contains a duplicate entry")
-            identifiers.add(identifier)
-        return self
-
 
 class AlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -545,6 +593,7 @@ class AlertResponse(BaseModel):
     language: LanguageCode
     language_confidence: Optional[float] = None
     matched_terms: List[MatchedTermResponse] = Field(default_factory=list)
+    unlisted_terms: List[UnlistedTermResponse] = Field(default_factory=list)
     hard_hits: Optional[List[str]] = None
     soft_hits: Optional[List[str]] = None
     duration_gate: Optional[str] = None
@@ -560,13 +609,24 @@ class AlertResponse(BaseModel):
             data = {
                 field: getattr(value, field, None)
                 for field in cls.model_fields
-                if field not in {"severity_level", "review_notice"}
+                if field not in {"severity_level", "review_notice", "unlisted_terms"}
             }
+            all_terms = list(data.get("matched_terms") or [])
+            data["matched_terms"] = [
+                term for term in all_terms if getattr(term, "term_id", None) is not None
+            ]
+            data["unlisted_terms"] = [
+                term for term in all_terms if getattr(term, "term_id", None) is None
+            ]
         level = SeverityLevel.normalize(data.get("severity"))
         data["severity"] = level.value.lower()
         data["severity_level"] = level
         if data.get("transcript") is None:
             data["transcript"] = data.get("transcribed_text")
+        # alerts.status is nullable and has no server default; a row written outside the
+        # ORM must not take down the whole alert list.
+        if data.get("status") is None:
+            data["status"] = "active"
         return data
 
 

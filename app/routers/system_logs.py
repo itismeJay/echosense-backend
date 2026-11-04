@@ -4,19 +4,13 @@ from datetime import datetime
 from typing import List, NamedTuple, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
 from app.models.edge_device import EdgeDevice
 from app.models.user import User
 from app.routers.auth import require_admin
-from app.services.device_auth import (
-    DEVICE_ID_HEADER,
-    DEVICE_KEY_HEADER,
-    authenticate_edge_device,
-)
+from app.services.device_auth import edge_device_or_transition
 from app.services.school_access import is_global_admin, resolve_school_scope
 
 router = APIRouter(prefix="/system", tags=["System Logs"])
@@ -83,22 +77,10 @@ class LogQueryResponse(BaseModel):
     total: int
 
 
-async def optional_edge_device(
-    device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
-    device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
-    db: AsyncSession = Depends(get_db),
-) -> EdgeDevice | None:
-    """Device credentials are optional during the edge transition, but verified if sent."""
-
-    if device_code is None and device_key is None:
-        return None
-    return await authenticate_edge_device(device_code, device_key, db)
-
-
 @router.post("/logs", response_model=LogIngestResponse)
 async def ingest_logs(
     body: LogIngest,
-    edge_device: EdgeDevice | None = Depends(optional_edge_device),
+    edge_device: EdgeDevice | None = Depends(edge_device_or_transition),
 ):
     global _log_counter
     now = datetime.utcnow()

@@ -22,8 +22,10 @@ from app.services.audit import (
     AuditAction,
     AuditResource,
     AuditStatus,
+    extract_ip_address,
     record_audit_event,
 )
+from app.services.login_rate_limit import login_rate_limiter
 from app.services.school_access import is_global_admin
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -300,9 +302,19 @@ async def login(
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    client_ip = extract_ip_address(request)
+    retry_after = login_rate_limiter.retry_after(body.email, client_ip)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed sign-in attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = await find_user_by_email(db, body.email)
 
     if not user or not pwd_context.verify(body.password, user.hashed_password):
+        login_rate_limiter.record_failure(body.email, client_ip)
         await record_audit_event(
             db,
             request,
@@ -330,6 +342,7 @@ async def login(
         await db.commit()
         raise HTTPException(status_code=403, detail=SCHOOL_INACTIVE)
 
+    login_rate_limiter.record_success(body.email, client_ip)
     access_token = create_token(user)
     await record_audit_event(
         db,

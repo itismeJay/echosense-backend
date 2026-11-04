@@ -74,6 +74,7 @@ from app.models.school import School  # noqa: E402
 from app.models.system_settings import SystemSettings  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.routers.auth import create_token, pwd_context  # noqa: E402
+from app.services.login_rate_limit import login_rate_limiter  # noqa: E402
 
 TEST_DEVICE_CODE = "classroom-test-pi"
 TEST_DEVICE_KEY = "synthetic-device-key-for-tests-only"
@@ -110,6 +111,13 @@ def prevent_external_notifications(monkeypatch):
     mocked_sender = AsyncMock()
     monkeypatch.setattr("app.routers.alerts.send_expo_pushes", mocked_sender)
     return mocked_sender
+
+
+@pytest.fixture(autouse=True)
+def reset_login_rate_limiter():
+    login_rate_limiter.reset()
+    yield
+    login_rate_limiter.reset()
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -74,8 +74,11 @@ FORBIDDEN = {
 }
 
 ALLOWED_READS = {
-    "super": [route for route in SUPER_ADMIN_ONLY + ADMIN_ONLY + REPORTS + EVERYONE
-              if route[0] == "GET" and "/schools/" not in route[1]],
+    "super": [
+        route
+        for route in SUPER_ADMIN_ONLY + ADMIN_ONLY + REPORTS + EVERYONE
+        if route[0] == "GET" and "/schools/" not in route[1]
+    ],
     "admin_a": [
         route for route in ADMIN_ONLY + SCHOOL_SETTINGS + REPORTS + EVERYONE if route[0] == "GET"
     ],

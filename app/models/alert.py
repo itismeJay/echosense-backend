@@ -18,6 +18,13 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 from app.languages import LanguageCode
+import app.models.school_settings  # noqa: F401  (registers SchoolTerm for the relationship)
+
+
+# Where a matched term came from. "global" links to slur_dictionary, "school" to one
+# school's own word, and "unlisted" is a term the device matched that neither list holds
+# (kept as text, so a real alert is never rejected over a dictionary gap).
+MATCHED_TERM_SOURCES = ("global", "school", "unlisted")
 
 
 class AlertMatchedTerm(Base):
@@ -27,6 +34,14 @@ class AlertMatchedTerm(Base):
             "alert_id",
             "term_id",
             name="uq_alert_matched_terms_alert_id_term_id",
+        ),
+        CheckConstraint(
+            "source IN ('global', 'school', 'unlisted')",
+            name="ck_alert_matched_terms_source",
+        ),
+        CheckConstraint(
+            "(source = 'global') = (term_id IS NOT NULL)",
+            name="ck_alert_matched_terms_global_has_term",
         ),
     )
 
@@ -40,23 +55,41 @@ class AlertMatchedTerm(Base):
     term_id = Column(
         Integer,
         ForeignKey("slur_dictionary.term_id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    school_term_id = Column(
+        Integer,
+        ForeignKey("school_terms.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    source = Column(String(20), nullable=False, default="global", server_default="global")
+    # The language the device reported; used when the term is not linked to a list.
+    reported_language = Column(String(3), nullable=True)
     matched_text = Column(String(100), nullable=False)
     match_type = Column(String(30), nullable=False, default="exact", server_default="exact")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     alert = relationship("Alert", back_populates="matched_terms")
     dictionary_term = relationship("SlurEntry", back_populates="alert_matches")
+    school_term = relationship("SchoolTerm", lazy="joined")
 
     @property
     def term(self) -> str:
-        return self.dictionary_term.slur_text
+        if self.dictionary_term is not None:
+            return self.dictionary_term.slur_text
+        if self.school_term is not None:
+            return self.school_term.term_text
+        return self.matched_text
 
     @property
-    def language(self) -> str:
-        return self.dictionary_term.language
+    def language(self) -> str | None:
+        if self.dictionary_term is not None:
+            return self.dictionary_term.language
+        if self.school_term is not None:
+            return self.school_term.language
+        return self.reported_language
 
 
 class Alert(Base):

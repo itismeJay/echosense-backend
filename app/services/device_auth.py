@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+import logging
 
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.config import settings
 from app.database import get_db
 from app.models.edge_device import EdgeDevice
 from app.routers.auth import SCHOOL_INACTIVE, pwd_context
@@ -13,6 +15,7 @@ DEVICE_ID_HEADER = "X-EchoSense-Device-Id"
 DEVICE_KEY_HEADER = "X-EchoSense-Device-Key"
 INVALID_DEVICE_CREDENTIALS = "Invalid device credentials"
 _DUMMY_DEVICE_KEY_HASH = pwd_context.hash("dummy-device-key-for-timing-only")
+logger = logging.getLogger(__name__)
 
 
 def _credential_error(status_code: int = 401) -> HTTPException:
@@ -66,29 +69,21 @@ async def authenticate_edge_device(
     return device
 
 
-async def stamp_device_check_in(
-    db: AsyncSession, device_code: str | None, device_key: str | None
+async def edge_device_or_transition(
+    device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
+    device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
+    db: AsyncSession = Depends(get_db),
 ) -> EdgeDevice | None:
-    """Record a check-in for a device whose credentials are valid; otherwise do nothing.
+    """Device credentials for edge-facing calls (heartbeat, log upload, dictionary sync).
 
-    Used by the heartbeat, which still accepts anonymous calls for the global status, so
-    bad or missing credentials are ignored rather than rejected.
+    Credentials that are sent are always verified (401/403 when wrong). A call with no
+    credentials at all is refused with 401, unless ECHOSENSE_ALLOW_ANONYMOUS_EDGE is on
+    for the switch-over from older edges; then it is allowed, logged, and returns None.
     """
 
-    if not device_code or not device_key or len(device_code) > 100 or len(device_key) > 256:
-        return None
-    result = await db.execute(
-        select(EdgeDevice)
-        .where(EdgeDevice.device_code == device_code.strip())
-        .options(joinedload(EdgeDevice.school))
-    )
-    device = result.scalar_one_or_none()
-    if device is None:
-        verify_device_key(device_key, _DUMMY_DEVICE_KEY_HASH)
-        return None
-    if not verify_device_key(device_key, device.api_key_hash):
-        return None
-    if not device.is_active or (device.school is not None and not device.school.is_active):
-        return None
-    device.last_seen_at = datetime.now(timezone.utc)
-    return device
+    if device_code is None and device_key is None:
+        if settings.ECHOSENSE_ALLOW_ANONYMOUS_EDGE:
+            logger.warning("Anonymous edge call accepted (ECHOSENSE_ALLOW_ANONYMOUS_EDGE=true)")
+            return None
+        raise _credential_error()
+    return await authenticate_edge_device(device_code, device_key, db)

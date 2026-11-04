@@ -75,9 +75,20 @@ scores must be in the range 0–1. Unknown top-level fields are rejected.
 
 `monitored_terms` is detector evidence and is stored as submitted.
 `matched_terms` is the existing normalized relationship to the backend
-dictionary. One is never silently converted into the other. When
-`matched_terms` is supplied, its existing dictionary and duplicate checks
-remain in force.
+dictionary. One is never silently converted into the other.
+
+Since 20261105_0014, a matched term never causes a rejection (an authenticated
+device's real alert must not be lost over a dictionary gap). Each entry is
+linked, in order, by `term_id` (or, with `"source": "school"`, by the device's
+school word id), then by normalized text to the global dictionary, then to the
+school's own words. A term neither list holds is stored as text with source
+`unlisted`. Repeated terms are merged, unknown languages are dropped, and text
+longer than 100 characters is truncated. Only an entry with neither `term` nor
+`term_id` is still a 422.
+
+Responses keep `matched_terms` for global dictionary links only (with an integer
+`term_id`, so older clients keep working) and add `unlisted_terms`:
+`[{term, language|null, match_type, source: "school"|"unlisted"}]`.
 
 ## Legacy compatibility mapping
 
@@ -93,7 +104,7 @@ The existing response fields remain available to deployed frontend clients:
 | `location` | Accepted for compatibility but ignored; registered classroom is stored |
 | `detected_words`, categories, hard/soft hits | Stored only when explicitly submitted |
 | `monitored_terms` | Stored separately as finalized detector evidence |
-| `matched_terms` | Stored relationally after dictionary validation |
+| `matched_terms` | Stored relationally; linked to the dictionary or school word when one matches, otherwise stored as `unlisted` |
 
 The `0.0` confidence fallback is only a legacy display compatibility value; it
 does not invent positive evidence. Consumers of schema version 2 should use

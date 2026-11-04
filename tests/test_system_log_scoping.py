@@ -1,5 +1,6 @@
 import pytest
 
+from app.config import settings as app_settings
 from app.database import AsyncSessionLocal
 from app.models.edge_device import EdgeDevice
 from app.routers import system_logs
@@ -39,8 +40,10 @@ async def _messages(client, identity) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_device_logs_are_visible_only_to_their_school_and_super_admin(
-    client, unauthenticated_edge_client, org_identities
+    client, unauthenticated_edge_client, org_identities, monkeypatch
 ):
+    # Anonymous lines are accepted only while the transition switch is on.
+    monkeypatch.setattr(app_settings, "ECHOSENSE_ALLOW_ANONYMOUS_EDGE", True)
     school_b_headers = await _add_school_b_device(org_identities)
 
     # The default client carries the school A fixture device's credentials.
@@ -64,6 +67,15 @@ async def test_device_logs_are_visible_only_to_their_school_and_super_admin(
         "[AUDIO] school B line",
         "[AUDIO] untagged line",
     ]
+
+
+@pytest.mark.asyncio
+async def test_anonymous_log_lines_are_refused_by_default(unauthenticated_edge_client):
+    response = await unauthenticated_edge_client.post(
+        "/system/logs", json={"lines": ["[AUDIO] injected line"]}
+    )
+
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

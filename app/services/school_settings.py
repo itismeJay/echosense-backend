@@ -128,10 +128,14 @@ async def effective_terms(db: AsyncSession, school_id: UUID) -> list[dict]:
 
     disabled = await disabled_term_ids(db, school_id)
     global_rows = (
-        await db.execute(
-            select(SlurEntry).order_by(SlurEntry.severity_weight.desc(), SlurEntry.term_id)
+        (
+            await db.execute(
+                select(SlurEntry).order_by(SlurEntry.severity_weight.desc(), SlurEntry.term_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     terms = [
         {
             "text": row.slur_text,

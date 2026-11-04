@@ -136,10 +136,14 @@ async def update_school_settings(
 async def _terms_out(db: AsyncSession, target: UUID) -> SchoolTermsOut:
     disabled = await disabled_term_ids(db, target)
     global_rows = (
-        await db.execute(
-            select(SlurEntry).order_by(SlurEntry.severity_weight.desc(), SlurEntry.term_id)
+        (
+            await db.execute(
+                select(SlurEntry).order_by(SlurEntry.severity_weight.desc(), SlurEntry.term_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return SchoolTermsOut(
         school_id=target,
         global_terms=[
@@ -182,8 +186,10 @@ async def add_school_term(
     if any(normalize_term(text) == normalized for text in global_texts):
         raise HTTPException(status_code=409, detail="This word is already on the global list")
     school_texts = (
-        await db.execute(select(SchoolTerm.term_text).where(SchoolTerm.school_id == target))
-    ).scalars().all()
+        (await db.execute(select(SchoolTerm.term_text).where(SchoolTerm.school_id == target)))
+        .scalars()
+        .all()
+    )
     if any(normalize_term(text) == normalized for text in school_texts):
         raise HTTPException(status_code=409, detail="Your school already monitors this word")
 
@@ -198,7 +204,9 @@ async def add_school_term(
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="Your school already monitors this word") from exc
+        raise HTTPException(
+            status_code=409, detail="Your school already monitors this word"
+        ) from exc
     await record_audit_event(
         db,
         request,

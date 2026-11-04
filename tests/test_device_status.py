@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
+from app.config import settings as app_settings
 from app.database import AsyncSessionLocal
 from app.models.edge_device import EdgeDevice
 from app.models.system_settings import SystemSettings
@@ -64,9 +65,21 @@ async def test_a_device_seen_three_minutes_ago_is_offline_with_its_last_check_in
 
 
 @pytest.mark.asyncio
-async def test_global_heartbeat_does_not_make_a_silent_device_online(
-    client, unauthenticated_edge_client, org_identities
+async def test_anonymous_heartbeat_is_refused(unauthenticated_edge_client):
+    anonymous = await unauthenticated_edge_client.post("/system-settings/heartbeat")
+
+    assert anonymous.status_code == 401
+    async with AsyncSessionLocal() as session:
+        settings_row = await session.scalar(select(SystemSettings))
+        assert settings_row.device_status == "offline"
+
+
+@pytest.mark.asyncio
+async def test_transition_heartbeat_does_not_make_a_silent_device_online(
+    client, unauthenticated_edge_client, org_identities, monkeypatch
 ):
+    # ECHOSENSE_ALLOW_ANONYMOUS_EDGE keeps old edges working during the switch-over.
+    monkeypatch.setattr(app_settings, "ECHOSENSE_ALLOW_ANONYMOUS_EDGE", True)
     await _set_last_seen(None)
 
     anonymous = await unauthenticated_edge_client.post("/system-settings/heartbeat")
@@ -97,7 +110,9 @@ async def test_heartbeat_with_device_credentials_records_that_devices_check_in(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_with_a_wrong_key_records_nothing(unauthenticated_edge_client):
+async def test_heartbeat_with_a_wrong_key_records_nothing(unauthenticated_edge_client, monkeypatch):
+    # Wrong credentials are refused even while anonymous calls are allowed.
+    monkeypatch.setattr(app_settings, "ECHOSENSE_ALLOW_ANONYMOUS_EDGE", True)
     await _set_last_seen(None)
 
     heartbeat = await unauthenticated_edge_client.post(
@@ -105,8 +120,7 @@ async def test_heartbeat_with_a_wrong_key_records_nothing(unauthenticated_edge_c
         headers={"X-EchoSense-Device-Id": TEST_DEVICE_CODE, "X-EchoSense-Device-Key": "wrong-key"},
     )
 
-    assert heartbeat.status_code == 200
-    assert heartbeat.json()["device_recognized"] is False
+    assert heartbeat.status_code == 401
     async with AsyncSessionLocal() as session:
         device = await session.scalar(
             select(EdgeDevice).where(EdgeDevice.device_code == TEST_DEVICE_CODE)
@@ -129,7 +143,7 @@ async def test_disabled_device_is_never_online(client, edge_device_identity, org
     )
     response = await client.get("/devices/status", headers=auth_headers(org_identities["admin_a"]))
 
-    assert heartbeat.json()["device_recognized"] is False
+    assert heartbeat.status_code == 403
     assert response.json()["devices"][0]["online"] is False
 
 

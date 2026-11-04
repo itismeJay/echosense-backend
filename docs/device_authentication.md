@@ -82,6 +82,16 @@ on first ingestion. Historical alerts remain readable with null device
 context. Existing `event_id`, evidence, severity, review notice, timestamps,
 and notification behavior are unchanged.
 
+## Other edge calls (heartbeat, log upload, dictionary sync)
+
+`POST /system-settings/heartbeat`, `POST /system/logs` and `GET /dictionary/`
+require the same two headers (the dictionary also accepts a signed-in admin's
+bearer token for the dashboard). Wrong credentials are always 401/403. A call
+with no credentials is 401, unless `ECHOSENSE_ALLOW_ANONYMOUS_EDGE=true`: a
+switch-over setting that keeps edges older than 2026-11-05 working (they sent no
+credentials on log upload and dictionary sync). Turn it off once every edge is
+updated.
+
 ## Disable or rotate
 
 Disable a lost device without deleting it:

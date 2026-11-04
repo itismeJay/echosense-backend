@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -7,11 +7,8 @@ from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.schemas.system_settings import SystemSettingsOut
 from app.routers.auth import require_super_admin
-from app.services.device_auth import (
-    DEVICE_ID_HEADER,
-    DEVICE_KEY_HEADER,
-    stamp_device_check_in,
-)
+from app.models.edge_device import EdgeDevice
+from app.services.device_auth import edge_device_or_transition
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -44,17 +41,15 @@ async def get_settings(
 @router.post("/heartbeat")
 async def post_heartbeat(
     db: AsyncSession = Depends(get_db),
-    device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
-    device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
+    device: EdgeDevice | None = Depends(edge_device_or_transition),
 ):
+    # Device credentials are required (see edge_device_or_transition); authenticating
+    # stamps the device's last_seen_at, which the per-device Online/Offline status reads.
     now = datetime.now(timezone.utc)
     row = await _get_row(db)
     if row:
         row.device_status = "online"
         row.last_heartbeat = now.replace(tzinfo=None)  # TIMESTAMP col requires naive datetime
-    # A device that sends its credentials also records its own check-in, which is what
-    # the per-device Online/Offline status reads.
-    device = await stamp_device_check_in(db, device_code, device_key)
     await db.commit()
     return {
         "status": "ok",

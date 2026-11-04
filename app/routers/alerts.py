@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from uuid import UUID
@@ -13,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.alert import Alert, AlertMatchedTerm
 from app.models.edge_device import EdgeDevice
+from app.models.school_settings import SchoolTerm
 from app.models.slur import SlurEntry
 from app.schemas.alert import (
     AlertCreate,
@@ -44,6 +47,7 @@ from app.config import settings
 from app.languages import LanguageCode
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
+logger = logging.getLogger(__name__)
 
 FINGERPRINT_EXCLUDED_FIELDS = frozenset({"location"})
 
@@ -61,74 +65,112 @@ def hydrate_alert(alert: Alert) -> Alert:
 def alert_load_options():
     return (
         selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.dictionary_term),
+        selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.school_term),
         selectinload(Alert.edge_device),
     )
+
+
+@dataclass(frozen=True)
+class ResolvedTerm:
+    source: str
+    matched_text: str
+    match_type: str
+    dictionary_term: SlurEntry | None = None
+    school_term: SchoolTerm | None = None
+    reported_language: str | None = None
 
 
 async def resolve_matched_terms(
     requested_terms,
     db: AsyncSession,
-) -> list[tuple[SlurEntry, str, str]]:
+    school_id: UUID | None = None,
+) -> list[ResolvedTerm]:
+    """Link each matched term to the global dictionary or the school's words.
+
+    Never raises: a term neither list holds is stored as "unlisted" text, because an
+    authenticated device's real alert must not be lost over a dictionary gap. Repeated
+    terms are merged. A term_id whose text disagrees with the request falls back to the
+    text, so the stored evidence is always what the device actually heard.
+    """
+
     if not requested_terms:
         return []
 
     result = await db.execute(select(SlurEntry))
     dictionary_entries = list(result.scalars().all())
     entries_by_id = {entry.term_id: entry for entry in dictionary_entries}
-    entries_by_text: dict[str, list[SlurEntry]] = {}
-    for entry in dictionary_entries:
-        entries_by_text.setdefault(normalize_term(entry.slur_text), []).append(entry)
+    entries_by_text: dict[str, SlurEntry] = {}
+    for entry in sorted(dictionary_entries, key=lambda item: item.term_id):
+        entries_by_text.setdefault(normalize_term(entry.slur_text), entry)
 
-    resolved: list[tuple[SlurEntry, str, str]] = []
-    resolved_ids: set[int] = set()
-    for requested in requested_terms:
-        if requested.term_id is not None:
-            entry = entries_by_id.get(requested.term_id)
-            if entry is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Monitored term {requested.term_id} does not exist",
-                )
-        else:
-            matches = entries_by_text.get(normalize_term(requested.term or ""), [])
-            if not matches:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Matched text does not correspond to a monitored term",
-                )
-            if len(matches) > 1:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Matched text is ambiguous; provide term_id",
-                )
-            entry = matches[0]
-
-        if requested.term is not None and normalize_term(requested.term) != normalize_term(
-            entry.slur_text
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Matched text does not correspond to monitored term {entry.term_id}",
-            )
-        if requested.language is not None and requested.language.value != entry.language:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Language does not correspond to monitored term {entry.term_id}",
-            )
-        if entry.term_id in resolved_ids:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Monitored term {entry.term_id} is duplicated",
-            )
-
-        resolved_ids.add(entry.term_id)
-        resolved.append(
-            (
-                entry,
-                (requested.term or entry.slur_text).strip(),
-                requested.match_type,
-            )
+    school_by_id: dict[int, SchoolTerm] = {}
+    school_by_text: dict[str, SchoolTerm] = {}
+    if school_id is not None:
+        school_result = await db.execute(
+            select(SchoolTerm).where(SchoolTerm.school_id == school_id).order_by(SchoolTerm.id)
         )
+        for school_term in school_result.scalars().all():
+            school_by_id[school_term.id] = school_term
+            school_by_text.setdefault(normalize_term(school_term.term_text), school_term)
+
+    resolved: list[ResolvedTerm] = []
+    seen: set[tuple[str, object]] = set()
+    for requested in requested_terms:
+        text = (requested.term or "").strip() or None
+        normalized = normalize_term(text) if text else None
+        entry: SlurEntry | None = None
+        school_term: SchoolTerm | None = None
+
+        if requested.term_id is not None:
+            if requested.source == "school":
+                school_term = school_by_id.get(requested.term_id)
+                if school_term is not None and normalized not in (
+                    None,
+                    normalize_term(school_term.term_text),
+                ):
+                    school_term = None
+            else:
+                entry = entries_by_id.get(requested.term_id)
+                if entry is not None and normalized not in (
+                    None,
+                    normalize_term(entry.slur_text),
+                ):
+                    entry = None
+        if entry is None and school_term is None and normalized:
+            entry = entries_by_text.get(normalized)
+            if entry is None:
+                school_term = school_by_text.get(normalized)
+
+        if entry is not None:
+            key: tuple[str, object] = ("global", entry.term_id)
+            item = ResolvedTerm(
+                "global", (text or entry.slur_text)[:100], requested.match_type, entry
+            )
+        elif school_term is not None:
+            key = ("school", school_term.id)
+            item = ResolvedTerm(
+                "school",
+                (text or school_term.term_text)[:100],
+                requested.match_type,
+                school_term=school_term,
+                # Kept on the row, so the evidence survives the school deleting the word.
+                reported_language=school_term.language,
+            )
+        else:
+            text = text or f"unknown term #{requested.term_id}"
+            key = ("unlisted", normalize_term(text))
+            item = ResolvedTerm(
+                "unlisted",
+                text[:100],
+                requested.match_type,
+                reported_language=(
+                    requested.language.value if requested.language is not None else None
+                ),
+            )
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(item)
 
     return resolved
 
@@ -260,7 +302,16 @@ async def create_alert(
     if not classroom.is_active or not classroom.school.is_active:
         raise HTTPException(status_code=409, detail="Device classroom is inactive")
 
-    resolved_terms = await resolve_matched_terms(alert.matched_terms, db)
+    resolved_terms = await resolve_matched_terms(alert.matched_terms, db, classroom.school_id)
+    unlisted_count = sum(1 for item in resolved_terms if item.source == "unlisted")
+    if unlisted_count:
+        # Only counts and the device code: never the words or the transcript.
+        logger.warning(
+            "Alert %s from device %s stored with %d unlisted matched term(s)",
+            alert.event_id,
+            edge_device.device_code,
+            unlisted_count,
+        )
     duration = alert.duration
     if duration is None:
         duration = (alert.event_end_timestamp - alert.event_start_timestamp).total_seconds()
@@ -331,12 +382,15 @@ async def create_alert(
         duration_gate=alert.duration_gate,
         required_duration=alert.required_duration,
     )
-    for dictionary_term, matched_text, match_type in resolved_terms:
+    for item in resolved_terms:
         new_alert.matched_terms.append(
             AlertMatchedTerm(
-                dictionary_term=dictionary_term,
-                matched_text=matched_text,
-                match_type=match_type,
+                source=item.source,
+                dictionary_term=item.dictionary_term,
+                school_term=item.school_term,
+                reported_language=item.reported_language,
+                matched_text=item.matched_text,
+                match_type=item.match_type,
             )
         )
     db.add(new_alert)

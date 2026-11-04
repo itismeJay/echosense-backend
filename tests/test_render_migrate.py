@@ -101,6 +101,30 @@ def _seed_legacy_rows(database_url: str) -> None:
     engine.dispose()
 
 
+def _seeded_dictionary_texts() -> set[str]:
+    """Every distinct term revisions 0011 and 0015 insert into an empty dictionary."""
+
+    import importlib.util
+    from pathlib import Path
+
+    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    texts: set[str] = set()
+    for name in (
+        "20261021_0011_seed_settings_and_default_dictionary",
+        "20261105_0015_seed_bisaya_lexicon_dictionary",
+    ):
+        spec = importlib.util.spec_from_file_location(name, versions / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for terms in (
+            getattr(module, "LEGACY_TERMS", ()),
+            getattr(module, "EDGE_TERMS", ()),
+            getattr(module, "LEXICON_TERMS", ()),
+        ):
+            texts.update(term[0] for term in terms)
+    return texts
+
+
 def _revision(database_url: str) -> str:
     engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
     with engine.connect() as connection:
@@ -244,14 +268,14 @@ def test_existing_alerts_and_dictionary_remain_readable_after_migration(
         ("MEDIUM", "unknown", None),
         ("HIGH", "ceb", None),
     ]
-    # Pre-existing terms survive with normalized languages; revision 0011 then appends
-    # the default dictionary after them without touching them.
+    # Pre-existing terms survive with normalized languages; revisions 0011 (default
+    # dictionary) and 0015 (Bisaya lexicon) then append after them without touching them.
     assert dictionary_rows[:3] == [
         ("legacy-fil", "fil"),
         ("legacy-ceb", "ceb"),
         ("legacy-en", "en"),
     ]
-    assert len(dictionary_rows) == 3 + 549
+    assert len(dictionary_rows) == 3 + len(_seeded_dictionary_texts())
 
 
 def test_edge_audio_event_migration_upgrades_downgrades_and_upgrades_again(

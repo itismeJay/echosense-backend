@@ -166,3 +166,20 @@ async def test_alert_list_filters_by_date_range(client, org_identities):
 
     assert [alert["id"] for alert in after.json()] == [recent]
     assert [alert["id"] for alert in before.json()] == [old]
+
+
+@pytest.mark.asyncio
+async def test_alert_with_null_status_is_listed_as_active(client, identities):
+    # Found by the 0008 -> head rehearsal: alerts.status is nullable with no server default.
+    from sqlalchemy import text
+
+    from app.database import engine as _engine
+
+    await _create_alert(client)
+    async with _engine.begin() as connection:
+        await connection.execute(text("UPDATE alerts SET status = NULL"))
+
+    listed = await client.get("/alerts/", headers=auth_headers(identities["staff"]))
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["status"] == "active"

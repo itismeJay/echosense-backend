@@ -43,9 +43,7 @@ def _scope(identities, key="school_a_id"):
 
 async def _seed_global_terms(*texts: str) -> list[int]:
     async with AsyncSessionLocal() as session:
-        entries = [
-            SlurEntry(slur_text=text, language="en", severity_weight=0.8) for text in texts
-        ]
+        entries = [SlurEntry(slur_text=text, language="en", severity_weight=0.8) for text in texts]
         session.add_all(entries)
         await session.commit()
         return [entry.term_id for entry in entries]
@@ -64,9 +62,7 @@ async def _audit(action: str) -> list[AuditLog]:
 
 @pytest.mark.asyncio
 async def test_school_admin_reads_defaults_for_own_school(client, org_identities):
-    response = await client.get(
-        "/school-settings", headers=auth_headers(org_identities["admin_a"])
-    )
+    response = await client.get("/school-settings", headers=auth_headers(org_identities["admin_a"]))
 
     assert response.status_code == 200
     body = response.json()
@@ -218,7 +214,9 @@ async def test_school_words_and_disabled_global_words_are_per_school(client, org
     assert added.status_code == 201
     assert added.json()["text"] == "local word"
     assert turned_off.json()["enabled_for_school"] is False
-    enabled = {term["term_id"]: term["enabled_for_school"] for term in a_terms.json()["global_terms"]}
+    enabled = {
+        term["term_id"]: term["enabled_for_school"] for term in a_terms.json()["global_terms"]
+    }
     assert enabled == {kept_id: True, off_id: False}
     assert [term["text"] for term in a_terms.json()["school_terms"]] == ["local word"]
     assert all(term["enabled_for_school"] for term in b_terms.json()["global_terms"])
@@ -323,9 +321,7 @@ def test_school_hours_off_means_always_within():
 
 
 def test_overnight_hours_belong_to_the_day_they_start():
-    night = _settings(
-        school_start_time=time(22, 0), school_end_time=time(6, 0), school_days=[5]
-    )
+    night = _settings(school_start_time=time(22, 0), school_end_time=time(6, 0), school_days=[5])
     friday_2300 = datetime(2026, 8, 7, 15, 0, tzinfo=timezone.utc)
     saturday_0500 = datetime(2026, 8, 7, 21, 0, tzinfo=timezone.utc)
     saturday_2300 = datetime(2026, 8, 8, 15, 0, tzinfo=timezone.utc)
@@ -549,7 +545,10 @@ async def test_unassigned_device_gets_409(client):
 
     response = await client.get(
         "/devices/me/config",
-        headers={"X-EchoSense-Device-Id": TEST_DEVICE_CODE, "X-EchoSense-Device-Key": TEST_DEVICE_KEY},
+        headers={
+            "X-EchoSense-Device-Id": TEST_DEVICE_CODE,
+            "X-EchoSense-Device-Key": TEST_DEVICE_KEY,
+        },
     )
 
     assert response.status_code == 409

@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     ECHOSENSE_CORS_ORIGINS: str = ",".join(DEFAULT_CORS_ORIGINS)
     EXPO_ACCESS_TOKEN: str | None = None
     RUN_LEGACY_STARTUP_MAINTENANCE: bool = False
+    # Transition switch for edges that predate device credentials on heartbeat, log upload
+    # and dictionary sync. Off by default; turn on only while an old edge is still in the
+    # field, then turn it off. Wrong credentials are always rejected.
+    ECHOSENSE_ALLOW_ANONYMOUS_EDGE: bool = False
+    # Failed sign-ins allowed per window before /auth/login answers 429.
+    LOGIN_RATE_LIMIT_ENABLED: bool = True
+    LOGIN_MAX_FAILURES_PER_ACCOUNT: int = 5
+    LOGIN_MAX_FAILURES_PER_IP: int = 30
+    LOGIN_FAILURE_WINDOW_SECONDS: int = 900
     SQL_ECHO: bool = False
     TESTING: bool = False
 

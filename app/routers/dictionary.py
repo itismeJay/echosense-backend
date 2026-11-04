@@ -9,7 +9,18 @@ from app.models.user import User
 from app.schemas.dictionary import SlurEntry, SlurCreate
 from app.schemas.alert import normalize_term
 from app.models.alert import AlertMatchedTerm
-from app.routers.auth import get_authenticated_user, get_current_user, require_admin, require_super_admin
+from app.models.edge_device import EdgeDevice
+from app.services.device_auth import (
+    DEVICE_ID_HEADER,
+    DEVICE_KEY_HEADER,
+    edge_device_or_transition,
+)
+from app.routers.auth import (
+    get_authenticated_user,
+    get_current_user,
+    require_admin,
+    require_super_admin,
+)
 from app.services.query_filters import escape_like
 from app.services.audit import (
     AuditAction,
@@ -23,16 +34,22 @@ router = APIRouter(prefix="/dictionary", tags=["Dictionary"])
 TOTAL_COUNT_HEADER = "X-Total-Count"
 
 
-async def require_admin_if_signed_in(
+async def require_dictionary_reader(
     request: Request,
     authorization: str | None = Header(default=None),
+    device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
+    device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
     db: AsyncSession = Depends(get_db),
-) -> User | None:
-    """Signed-in readers must be admins; the edge's dictionary sync still sends no credentials."""
-    if authorization is None:
-        return None
-    user = await get_current_user(await get_authenticated_user(authorization, db))
-    return await require_admin(request, user, db)
+) -> User | EdgeDevice | None:
+    """An admin (dashboard) or an authenticated edge device (dictionary sync).
+
+    A signed-in reader must be an admin. Otherwise device credentials are required; a call
+    with neither is refused unless ECHOSENSE_ALLOW_ANONYMOUS_EDGE is on for old edges.
+    """
+    if authorization is not None:
+        user = await get_current_user(await get_authenticated_user(authorization, db))
+        return await require_admin(request, user, db)
+    return await edge_device_or_transition(device_code, device_key, db)
 
 
 @router.get("", response_model=List[SlurEntry], include_in_schema=False)
@@ -44,10 +61,10 @@ async def get_dictionary(
     skip: int = Query(default=0, ge=0),
     limit: int | None = Query(default=None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _: User | None = Depends(require_admin_if_signed_in),
+    _: User | EdgeDevice | None = Depends(require_dictionary_reader),
 ):
     # Without parameters this still returns every term as a plain list, which the edge's
-    # dictionary sync relies on. X-Total-Count reports the filtered total for paging.
+    # (device-authenticated) dictionary sync relies on. X-Total-Count reports the filtered total for paging.
     conditions = []
     if search and search.strip():
         pattern = f"%{escape_like(normalize_term(search))}%"

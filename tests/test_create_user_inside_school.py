@@ -27,9 +27,7 @@ async def _create_in_school(client, identity, path, scope_school_id, **body):
 
 
 async def _login(client, email):
-    response = await client.post(
-        "/auth/login", json={"email": email, "password": VALID_PASSWORD}
-    )
+    response = await client.post("/auth/login", json={"email": email, "password": VALID_PASSWORD})
     assert response.status_code == 200
     return {"token": response.json()["access_token"]}
 
@@ -49,14 +47,23 @@ async def test_add_person_inside_a_school_creates_a_school_account(
 
     # Body school_id omitted, as the scope query alone must be enough.
     scoped_only = await _create_in_school(
-        client, org_identities["super"], path, school_b,
-        email=f"scoped-{role}@new.test", role=role,
+        client,
+        org_identities["super"],
+        path,
+        school_b,
+        email=f"scoped-{role}@new.test",
+        role=role,
     )
     # And the shape the dashboard sends: body school_id plus an explicit false.
     explicit = await _create_in_school(
-        client, org_identities["super"], path, school_b,
-        email=f"explicit-{role}@new.test", role=role,
-        school_id=str(school_b), is_super_admin=False,
+        client,
+        org_identities["super"],
+        path,
+        school_b,
+        email=f"explicit-{role}@new.test",
+        role=role,
+        school_id=str(school_b),
+        is_super_admin=False,
     )
 
     for response in (scoped_only, explicit):
@@ -89,8 +96,13 @@ async def test_school_admin_adds_every_role_to_own_school(client, org_identities
 @pytest.mark.parametrize("path", CREATE_PATHS)
 async def test_super_admin_cannot_be_created_inside_a_school(client, org_identities, path):
     in_scope = await _create_in_school(
-        client, org_identities["super"], path, org_identities["school_b_id"],
-        email="scoped-super@new.test", role="admin", is_super_admin=True,
+        client,
+        org_identities["super"],
+        path,
+        org_identities["school_b_id"],
+        email="scoped-super@new.test",
+        role="admin",
+        is_super_admin=True,
     )
     with_school = await client.post(
         path,
@@ -133,8 +145,12 @@ async def test_only_a_json_true_requests_a_super_admin(client, org_identities, p
 @pytest.mark.parametrize("path", CREATE_PATHS)
 async def test_scope_and_body_school_must_agree(client, org_identities, path):
     response = await _create_in_school(
-        client, org_identities["super"], path, org_identities["school_b_id"],
-        email="mismatch@new.test", role="staff",
+        client,
+        org_identities["super"],
+        path,
+        org_identities["school_b_id"],
+        email="mismatch@new.test",
+        role="staff",
         school_id=str(org_identities["school_a_id"]),
     )
 
@@ -145,8 +161,12 @@ async def test_scope_and_body_school_must_agree(client, org_identities, path):
 @pytest.mark.parametrize("path", CREATE_PATHS)
 async def test_school_admin_cannot_use_a_foreign_scope(client, org_identities, path):
     response = await _create_in_school(
-        client, org_identities["admin_a"], path, org_identities["school_b_id"],
-        email="foreign@new.test", role="staff",
+        client,
+        org_identities["admin_a"],
+        path,
+        org_identities["school_b_id"],
+        email="foreign@new.test",
+        role="staff",
     )
 
     assert response.status_code == 403
@@ -156,13 +176,22 @@ async def test_school_admin_cannot_use_a_foreign_scope(client, org_identities, p
 async def test_principal_created_in_a_school_cannot_reach_platform_data(client, org_identities):
     school_b = org_identities["school_b_id"]
     other_school_event = await _create_in_school(
-        client, org_identities["super"], "/users/", org_identities["school_a_id"],
-        email="teacher@school-a.test", role="staff",
+        client,
+        org_identities["super"],
+        "/users/",
+        org_identities["school_a_id"],
+        email="teacher@school-a.test",
+        role="staff",
     )
     assert other_school_event.status_code == 201
     created = await _create_in_school(
-        client, org_identities["super"], "/users/", school_b,
-        email="principal@school-b.test", role="admin", school_id=str(school_b),
+        client,
+        org_identities["super"],
+        "/users/",
+        school_b,
+        email="principal@school-b.test",
+        role="admin",
+        school_id=str(school_b),
         is_super_admin=False,
     )
     assert created.status_code == 201

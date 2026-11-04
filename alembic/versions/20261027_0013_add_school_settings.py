@@ -43,9 +43,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("ARRAY['HIGH', 'MEDIUM']::varchar[]"),
         ),
-        sa.Column(
-            "school_hours_enabled", sa.Boolean(), nullable=False, server_default="false"
-        ),
+        sa.Column("school_hours_enabled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column(
             "school_days",
             postgresql.ARRAY(sa.Integer()),
@@ -55,12 +53,8 @@ def upgrade() -> None:
         sa.Column(
             "school_start_time", sa.Time(), nullable=False, server_default=sa.text("'07:00'")
         ),
-        sa.Column(
-            "school_end_time", sa.Time(), nullable=False, server_default=sa.text("'17:00'")
-        ),
-        sa.Column(
-            "timezone", sa.String(64), nullable=False, server_default="Asia/Manila"
-        ),
+        sa.Column("school_end_time", sa.Time(), nullable=False, server_default=sa.text("'17:00'")),
+        sa.Column("timezone", sa.String(64), nullable=False, server_default="Asia/Manila"),
         sa.Column("sensitivity", sa.String(10), nullable=False, server_default="normal"),
         sa.Column(
             "updated_at",
@@ -107,9 +101,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.func.now(),
         ),
-        sa.CheckConstraint(
-            "language IN ('fil', 'ceb', 'en')", name="ck_school_terms_language"
-        ),
+        sa.CheckConstraint("language IN ('fil', 'ceb', 'en')", name="ck_school_terms_language"),
         sa.CheckConstraint(
             "severity_weight >= 0 AND severity_weight <= 1",
             name="ck_school_terms_severity_weight",
@@ -147,9 +139,7 @@ def upgrade() -> None:
 
     op.add_column(
         "alerts",
-        sa.Column(
-            "outside_school_hours", sa.Boolean(), nullable=False, server_default="false"
-        ),
+        sa.Column("outside_school_hours", sa.Boolean(), nullable=False, server_default="false"),
     )
 
 
