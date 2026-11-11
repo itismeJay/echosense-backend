@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
-from app.routers import devices
+from app.routers import classrooms, devices
 from app.routers import dictionary, system_settings, audit_logs, reports
 from app.routers import system_logs
 from app.config import CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS, settings
@@ -17,6 +17,8 @@ import app.models.system_settings  # noqa: F401
 import app.models.audit_log  # noqa: F401
 import app.models.report  # noqa: F401
 import app.models.edge_device  # noqa: F401
+import app.models.classroom  # noqa: F401
+import app.models.school  # noqa: F401
 
 # Legacy startup maintenance is retained temporarily for the older non-Alembic
 # tables. Deployments using the Alembic schema should disable it with
@@ -127,6 +129,7 @@ app.include_router(audit_logs.router)
 app.include_router(reports.router)
 app.include_router(system_logs.router)
 app.include_router(devices.router)
+app.include_router(classrooms.router)
 
 
 def required_ingest_header_openapi():

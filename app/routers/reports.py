@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, cast, Date
+from sqlalchemy import Date, cast, false, func, select
 from typing import List
 from app.database import get_db
 from app.models.report import Report
@@ -14,6 +14,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
+from app.services.school_access import is_global_admin, scope_alert_query
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -43,9 +44,15 @@ async def require_admin_or_counselor(
 @router.get("/", response_model=List[ReportOut])
 async def get_reports(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin_or_counselor),
+    current_user: User = Depends(require_admin_or_counselor),
 ):
-    result = await db.execute(select(Report).order_by(Report.generated_at.desc()))
+    query = select(Report).order_by(Report.generated_at.desc())
+    if not is_global_admin(current_user):
+        if current_user.school_id is None:
+            query = query.where(false())
+        else:
+            query = query.where(Report.school_id == current_user.school_id)
+    result = await db.execute(query)
     return result.scalars().all()
 
 
@@ -57,16 +64,18 @@ async def generate_report(
     current_user: User = Depends(require_admin_or_counselor),
 ):
     count_result = await db.execute(
-        select(func.count(Alert.id)).where(
+        scope_alert_query(select(func.count(Alert.id)), current_user).where(
             cast(Alert.created_at, Date) >= body.date_from,
             cast(Alert.created_at, Date) <= body.date_to,
         )
     )
     total = count_result.scalar() or 0
 
+    report_school_id = None if is_global_admin(current_user) else current_user.school_id
     report = Report(
         generated_by=current_user.id,
         generated_by_email=current_user.email,
+        school_id=report_school_id,
         date_from=body.date_from,
         date_to=body.date_to,
         total_incidents=total,
@@ -88,6 +97,7 @@ async def generate_report(
             "date_to": body.date_to,
             "total_incidents": total,
         },
+        school_id=report_school_id,
     )
     await db.commit()
     await db.refresh(report)

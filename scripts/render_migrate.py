@@ -16,8 +16,8 @@ from sqlalchemy.pool import NullPool
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASELINE_REVISION = "20260727_0001"
-HEAD_REVISION = "20260804_0008"
-MIGRATION_LOCK_ID = 202608040008
+HEAD_REVISION = "20260810_0009"
+MIGRATION_LOCK_ID = 202608100009
 
 BASELINE_COLUMNS = {
     "users": frozenset({"id", "email", "hashed_password", "role", "push_token"}),

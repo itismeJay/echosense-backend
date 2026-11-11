@@ -548,3 +548,229 @@ def test_partial_schema_is_rejected_without_mutation(disposable_database, monkey
     assert "module" not in columns
     assert not version_table_exists
     assert audit_count == 1
+
+
+def test_multi_room_migration_backfills_ids_preserves_history_and_downgrades(
+    disposable_database,
+    monkeypatch,
+):
+    previous_revision = "20260804_0008"
+    _upgrade_to(disposable_database, previous_revision, monkeypatch)
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO users (email, hashed_password, role)
+                VALUES ('migration-admin@school.test', 'synthetic-hash', 'admin')
+                """
+            )
+        )
+        device_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO edge_devices (
+                    id, device_code, display_name, classroom_name, school_name, api_key_hash
+                )
+                VALUES (
+                    gen_random_uuid(), 'migration-device-01', 'Migration Device',
+                    'Classroom A101', 'School Alpha', 'synthetic-hash'
+                )
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+        alert_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO alerts (
+                    severity, confidence, duration, language, edge_device_id,
+                    classroom_name_snapshot, school_name_snapshot
+                )
+                VALUES (
+                    'LOW', 0.5, 1.0, 'unknown', :device_id,
+                    'Classroom A101', 'School Alpha'
+                )
+                RETURNING id
+                """
+            ),
+            {"device_id": device_id},
+        ).scalar_one()
+    engine.dispose()
+
+    _upgrade_to(disposable_database, "head", monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        school = connection.execute(sa.text("SELECT id, name FROM schools")).one()
+        classroom = connection.execute(sa.text("SELECT id, school_id, name FROM classrooms")).one()
+        device = connection.execute(
+            sa.text(
+                """
+                SELECT school_id, classroom_id, classroom_name, school_name
+                FROM edge_devices WHERE id = :device_id
+                """
+            ),
+            {"device_id": device_id},
+        ).one()
+        alert = connection.execute(
+            sa.text(
+                """
+                SELECT school_id, classroom_id, classroom_name_snapshot, school_name_snapshot
+                FROM alerts WHERE id = :alert_id
+                """
+            ),
+            {"alert_id": alert_id},
+        ).one()
+        admin = connection.execute(sa.text("SELECT school_id, is_super_admin FROM users")).one()
+        classroom_indexes = {index["name"]: index for index in inspector.get_indexes("classrooms")}
+        edge_foreign_keys = {
+            foreign_key["name"]: foreign_key
+            for foreign_key in inspector.get_foreign_keys("edge_devices")
+        }
+        alert_foreign_keys = {
+            foreign_key["name"]: foreign_key for foreign_key in inspector.get_foreign_keys("alerts")
+        }
+    engine.dispose()
+
+    assert school.name == "School Alpha"
+    assert classroom.school_id == school.id
+    assert classroom.name == "Classroom A101"
+    assert device == (school.id, classroom.id, "Classroom A101", "School Alpha")
+    assert alert == (school.id, classroom.id, "Classroom A101", "School Alpha")
+    assert admin == (school.id, True)
+    assert classroom_indexes["uq_classrooms_school_normalized_name"]["unique"] is True
+    assert edge_foreign_keys["fk_edge_devices_classroom_school"]["constrained_columns"] == [
+        "classroom_id",
+        "school_id",
+    ]
+    assert alert_foreign_keys["fk_alerts_classroom_school"]["constrained_columns"] == [
+        "classroom_id",
+        "school_id",
+    ]
+
+    _downgrade_to(disposable_database, previous_revision, monkeypatch)
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        assert "schools" not in inspector.get_table_names()
+        assert "classrooms" not in inspector.get_table_names()
+        assert "school_id" not in {
+            column["name"] for column in inspector.get_columns("edge_devices")
+        }
+        legacy = connection.execute(
+            sa.text("SELECT classroom_name, school_name FROM edge_devices WHERE id = :device_id"),
+            {"device_id": device_id},
+        ).one()
+    engine.dispose()
+    assert legacy == ("Classroom A101", "School Alpha")
+    assert _revision(disposable_database) == previous_revision
+
+
+def test_multi_room_backfill_keeps_known_school_without_guessing_classroom(
+    disposable_database,
+    monkeypatch,
+):
+    _upgrade_to(disposable_database, "20260804_0008", monkeypatch)
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    cases = [
+        ("case-a", "School Alpha", "A101"),
+        ("case-b", "School Alpha", None),
+        ("case-c", "School Alpha", ""),
+        ("case-d", "School Alpha", "Unknown Room"),
+        ("case-e", None, "A101"),
+        ("case-f", None, None),
+        ("case-g", "School Beta", "A101"),
+    ]
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text("ALTER TABLE edge_devices ALTER COLUMN classroom_name DROP NOT NULL")
+        )
+        for code, school_name, classroom_name in cases:
+            if code == "case-d":
+                continue
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO edge_devices (
+                        id, device_code, display_name, classroom_name, school_name, api_key_hash
+                    ) VALUES (
+                        gen_random_uuid(), :code, :code, :classroom_name, :school_name,
+                        'synthetic-hash'
+                    )
+                    """
+                ),
+                {
+                    "code": code,
+                    "school_name": school_name,
+                    "classroom_name": classroom_name,
+                },
+            )
+        for code, school_name, classroom_name in cases:
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO alerts (
+                        severity, confidence, duration, language,
+                        classroom_name_snapshot, school_name_snapshot, transcribed_text
+                    ) VALUES (
+                        'LOW', 0.5, 1.0, 'unknown', :classroom_name, :school_name, :code
+                    )
+                    """
+                ),
+                {
+                    "code": code,
+                    "school_name": school_name,
+                    "classroom_name": classroom_name,
+                },
+            )
+    engine.dispose()
+
+    _upgrade_to(disposable_database, "head", monkeypatch)
+
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        device_rows = connection.execute(
+            sa.text(
+                """
+                SELECT edge_devices.device_code, schools.name, classrooms.name
+                FROM edge_devices
+                LEFT JOIN schools ON schools.id = edge_devices.school_id
+                LEFT JOIN classrooms ON classrooms.id = edge_devices.classroom_id
+                ORDER BY edge_devices.device_code
+                """
+            )
+        ).all()
+        alert_rows = connection.execute(
+            sa.text(
+                """
+                SELECT alerts.transcribed_text, schools.name, classrooms.name
+                FROM alerts
+                LEFT JOIN schools ON schools.id = alerts.school_id
+                LEFT JOIN classrooms ON classrooms.id = alerts.classroom_id
+                ORDER BY alerts.transcribed_text
+                """
+            )
+        ).all()
+    engine.dispose()
+
+    expected_devices = [
+        ("case-a", "School Alpha", "A101"),
+        ("case-b", "School Alpha", None),
+        ("case-c", "School Alpha", None),
+        ("case-e", None, None),
+        ("case-f", None, None),
+        ("case-g", "School Beta", "A101"),
+    ]
+    expected_alerts = [
+        ("case-a", "School Alpha", "A101"),
+        ("case-b", "School Alpha", None),
+        ("case-c", "School Alpha", None),
+        ("case-d", "School Alpha", None),
+        ("case-e", None, None),
+        ("case-f", None, None),
+        ("case-g", "School Beta", "A101"),
+    ]
+    assert device_rows == expected_devices
+    assert alert_rows == expected_alerts

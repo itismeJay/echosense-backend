@@ -2,6 +2,7 @@ import logging
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.config import (
     CORS_ALLOWED_HEADERS,
@@ -11,6 +12,7 @@ from app.config import (
     settings,
 )
 from app.database import AsyncSessionLocal
+from app.models.edge_device import EdgeDevice
 from app.models.user import User
 from app.services.notification_recipients import (
     RecipientSelection,
@@ -49,12 +51,14 @@ def controlled_test_settings(monkeypatch):
 
 async def _add_users(*tokens: str | None) -> list[User]:
     async with AsyncSessionLocal() as session:
+        school_id = await session.scalar(select(EdgeDevice.school_id).limit(1))
         users = [
             User(
                 email=f"notification-user-{index}@example.test",
                 hashed_password="synthetic-hash",
                 role="admin" if index == 1 else "staff",
                 push_token=token,
+                school_id=school_id,
             )
             for index, token in enumerate(tokens, start=1)
         ]

@@ -8,6 +8,7 @@ from app.models.alert import Alert
 from app.routers.auth import require_alert_reviewer
 from app.schemas.alert import AlertResponse
 from app.routers.alerts import hydrate_alert
+from app.services.school_access import scope_alert_query
 from typing import List
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
@@ -21,10 +22,13 @@ async def get_logs(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_alert_reviewer),
+    current_user=Depends(require_alert_reviewer),
 ):
     result = await db.execute(
-        select(Alert).order_by(Alert.created_at.desc()).offset(skip).limit(limit)
+        scope_alert_query(select(Alert), current_user)
+        .order_by(Alert.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     return [hydrate_alert(a) for a in result.scalars().all()]
 
@@ -32,17 +36,29 @@ async def get_logs(
 @router.get("/stats")
 async def get_stats(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_alert_reviewer),
+    current_user=Depends(require_alert_reviewer),
 ):
-    total = await db.execute(select(func.count(Alert.id)))
-    high = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "HIGH"))
-    medium = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "MEDIUM"))
-    low = await db.execute(select(func.count(Alert.id)).where(Alert.severity == "LOW"))
+    total = await db.execute(scope_alert_query(select(func.count(Alert.id)), current_user))
+    high = await db.execute(
+        scope_alert_query(select(func.count(Alert.id)), current_user).where(
+            Alert.severity == "HIGH"
+        )
+    )
+    medium = await db.execute(
+        scope_alert_query(select(func.count(Alert.id)), current_user).where(
+            Alert.severity == "MEDIUM"
+        )
+    )
+    low = await db.execute(
+        scope_alert_query(select(func.count(Alert.id)), current_user).where(Alert.severity == "LOW")
+    )
 
     # Emotion breakdown — group counts, mapping NULL/unrecognized into "unknown".
     emotion_breakdown = {bucket: 0 for bucket in EMOTION_BUCKETS}
     emotion_rows = await db.execute(
-        select(Alert.emotion, func.count(Alert.id)).group_by(Alert.emotion)
+        scope_alert_query(select(Alert.emotion, func.count(Alert.id)), current_user).group_by(
+            Alert.emotion
+        )
     )
     for emotion, count in emotion_rows.all():
         key = emotion if emotion in emotion_breakdown else "unknown"
@@ -50,7 +66,9 @@ async def get_stats(
 
     # Top detected words — flatten every alert's JSON word list and count.
     words_rows = await db.execute(
-        select(Alert.detected_words).where(Alert.detected_words.is_not(None))
+        scope_alert_query(select(Alert.detected_words), current_user).where(
+            Alert.detected_words.is_not(None)
+        )
     )
     word_counter: Counter = Counter()
     for (raw,) in words_rows.all():
@@ -60,7 +78,7 @@ async def get_stats(
             continue
     top_detected_words = [word for word, _ in word_counter.most_common(10)]
 
-    avg = await db.execute(select(func.avg(Alert.confidence)))
+    avg = await db.execute(scope_alert_query(select(func.avg(Alert.confidence)), current_user))
     average_confidence = round(float(avg.scalar() or 0.0), 4)
 
     return {

@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -21,6 +21,7 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
+from app.services.school_access import is_global_admin
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
@@ -114,8 +115,14 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _conditions(filters: AuditLogFilters):
+def _conditions(filters: AuditLogFilters, current_user: User | None = None):
     conditions = []
+    if current_user is not None and not is_global_admin(current_user):
+        conditions.append(
+            AuditLog.school_id == current_user.school_id
+            if current_user.school_id is not None
+            else false()
+        )
     if filters.search:
         term = f"%{_escape_like(filters.search)}%"
         conditions.append(
@@ -144,14 +151,18 @@ def _conditions(filters: AuditLogFilters):
     return conditions
 
 
-def _ordered_query(filters: AuditLogFilters):
+def _ordered_query(filters: AuditLogFilters, current_user: User | None = None):
     occurred_at = (
         AuditLog.occurred_at.asc().nullslast()
         if filters.sort_order == "asc"
         else AuditLog.occurred_at.desc().nullslast()
     )
     identifier = AuditLog.id.asc() if filters.sort_order == "asc" else AuditLog.id.desc()
-    return select(AuditLog).where(*_conditions(filters)).order_by(occurred_at, identifier)
+    return (
+        select(AuditLog)
+        .where(*_conditions(filters, current_user))
+        .order_by(occurred_at, identifier)
+    )
 
 
 @router.get("", response_model=AuditLogPage)
@@ -160,14 +171,14 @@ async def get_audit_logs(
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     filters: AuditLogFilters = Depends(get_audit_log_filters),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
-    conditions = _conditions(filters)
+    conditions = _conditions(filters, current_user)
     total_result = await db.execute(select(func.count(AuditLog.id)).where(*conditions))
     total = int(total_result.scalar_one())
 
     result = await db.execute(
-        _ordered_query(filters).offset((page - 1) * page_size).limit(page_size)
+        _ordered_query(filters, current_user).offset((page - 1) * page_size).limit(page_size)
     )
     items = result.scalars().all()
     return AuditLogPage(
@@ -203,7 +214,7 @@ async def export_audit_logs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    conditions = _conditions(filters)
+    conditions = _conditions(filters, current_user)
     total_result = await db.execute(select(func.count(AuditLog.id)).where(*conditions))
     total = int(total_result.scalar_one())
     if total > MAX_EXPORT_ROWS:
@@ -217,7 +228,7 @@ async def export_audit_logs(
 
     # The count is checked first for a clear error, and the query has its own
     # hard ceiling so concurrent inserts cannot bypass the export limit.
-    result = await db.execute(_ordered_query(filters).limit(MAX_EXPORT_ROWS + 1))
+    result = await db.execute(_ordered_query(filters, current_user).limit(MAX_EXPORT_ROWS + 1))
     records = result.scalars().all()
     if len(records) > MAX_EXPORT_ROWS:
         raise HTTPException(

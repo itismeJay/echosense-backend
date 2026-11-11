@@ -34,8 +34,8 @@ def _device_payload(code="classroom-101-pi") -> dict:
     return {
         "device_code": code,
         "display_name": "Room 101 EchoSense",
-        "classroom_name": "Room 101",
-        "school_name": "Example School",
+        "classroom_name": "Synthetic Test Classroom",
+        "school_name": "Synthetic Test School",
     }
 
 
@@ -202,7 +202,7 @@ async def test_historical_alert_without_device_serializes_with_null_context(
 
     response = await client.get(
         f"/alerts/{alert_id}",
-        headers=auth_headers(identities["staff"]),
+        headers=auth_headers(identities["admin"]),
     )
 
     assert response.status_code == 200
@@ -282,24 +282,18 @@ async def test_admin_can_update_assignment_and_disable_or_enable_device(
     )
     device_id = created.json()["device"]["id"]
 
-    disabled = await client.patch(
-        f"/devices/{device_id}",
-        json={
-            "classroom_name": "Room 102",
-            "school_name": None,
-            "is_active": False,
-        },
+    disabled = await client.post(
+        f"/devices/{device_id}/disable",
         headers=admin_headers,
     )
-    enabled = await client.patch(
-        f"/devices/{device_id}",
-        json={"is_active": True},
+    enabled = await client.post(
+        f"/devices/{device_id}/enable",
         headers=admin_headers,
     )
 
     assert disabled.status_code == enabled.status_code == 200
-    assert disabled.json()["classroom_name"] == "Room 102"
-    assert disabled.json()["school_name"] is None
+    assert disabled.json()["classroom_name"] == "Synthetic Test Classroom"
+    assert disabled.json()["school_name"] == "Synthetic Test School"
     assert disabled.json()["is_active"] is False
     assert enabled.json()["is_active"] is True
 

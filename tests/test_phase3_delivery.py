@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.alert import Alert
 from app.models.edge_device import EdgeDevice
+from app.models.classroom import Classroom
 from app.routers.auth import pwd_context
 from app.schemas.alert import AlertCreate, AlertResponse
 from tests.conftest import finalized_alert_fields
@@ -258,11 +259,15 @@ async def test_cross_device_event_reuse_returns_409(client):
     first = await client.post("/alerts/", json=payload)
     second_key = "synthetic-second-device-key"
     async with AsyncSessionLocal() as session:
+        classroom = await session.scalar(select(Classroom).limit(1))
         session.add(
             EdgeDevice(
                 device_code="classroom-second-pi",
                 display_name="Second synthetic device",
-                classroom_name="Second synthetic classroom",
+                school_id=classroom.school_id,
+                classroom_id=classroom.id,
+                legacy_classroom_name=classroom.name,
+                legacy_school_name=classroom.school.name,
                 api_key_hash=pwd_context.hash(second_key),
             )
         )

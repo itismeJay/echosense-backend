@@ -30,6 +30,8 @@ from app.models.slur import SlurEntry  # noqa: E402,F401
 from app.models.system_settings import SystemSettings  # noqa: E402,F401
 from app.models.user import User  # noqa: E402,F401
 from app.models.edge_device import EdgeDevice  # noqa: E402,F401
+from app.models.classroom import Classroom  # noqa: E402,F401
+from app.models.school import School  # noqa: E402,F401
 
 database_url = database_url.replace(
     "postgresql+asyncpg://",
