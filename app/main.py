@@ -5,10 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from app.routers import alerts, logs, auth, users
-from app.routers import classrooms, devices
+from app.routers import classrooms, device_claims, devices, schools
 from app.routers import dictionary, system_settings, audit_logs, reports
-from app.routers import system_logs
-from app.config import CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS, settings
+from app.routers import school_settings, system_logs
+from app.config import (
+    CORS_ALLOWED_HEADERS,
+    CORS_ALLOWED_METHODS,
+    CORS_EXPOSED_HEADERS,
+    settings,
+)
 from app.database import engine, Base
 
 # Imported so Base.metadata.create_all picks them up at startup
@@ -19,6 +24,7 @@ import app.models.report  # noqa: F401
 import app.models.edge_device  # noqa: F401
 import app.models.classroom  # noqa: F401
 import app.models.school  # noqa: F401
+import app.models.school_settings  # noqa: F401
 
 # Legacy startup maintenance is retained temporarily for the older non-Alembic
 # tables. Deployments using the Alembic schema should disable it with
@@ -55,7 +61,7 @@ ALERT_COLUMN_MIGRATIONS = [
 SYSTEM_SETTINGS_COLUMN_MIGRATIONS = [
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS device_status VARCHAR(20) DEFAULT 'offline'",
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP",
-    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS vosk_version VARCHAR(50) DEFAULT 'vosk-model-small-en-us-0.15'",
+    "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS stt_model_version VARCHAR(50) DEFAULT 'faster-whisper small int8'",
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS yamnet_version VARCHAR(50) DEFAULT 'YAMNet TFLite v1.0'",
     "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS last_ota_update TIMESTAMP",
 ]
@@ -85,10 +91,10 @@ ON CONFLICT (slur_text) DO NOTHING
 SYSTEM_SETTINGS_SEED = """
 INSERT INTO system_settings (
   confidence_threshold, aggression_duration_threshold,
-  device_status, vosk_version, yamnet_version
+  device_status, stt_model_version, yamnet_version
 )
 SELECT 0.55, 2.0, 'offline',
-       'vosk-model-small-en-us-0.15', 'YAMNet TFLite v1.0'
+       'faster-whisper small int8', 'YAMNet TFLite v1.0'
 WHERE NOT EXISTS (SELECT 1 FROM system_settings)
 """
 
@@ -107,6 +113,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=list(CORS_ALLOWED_METHODS),
     allow_headers=list(CORS_ALLOWED_HEADERS),
+    expose_headers=list(CORS_EXPOSED_HEADERS),
 )
 
 
@@ -128,8 +135,12 @@ app.include_router(system_settings.router)
 app.include_router(audit_logs.router)
 app.include_router(reports.router)
 app.include_router(system_logs.router)
+# Before devices.router so /devices/provision and /devices/activate never meet /{device_id}.
+app.include_router(device_claims.router)
 app.include_router(devices.router)
 app.include_router(classrooms.router)
+app.include_router(schools.router)
+app.include_router(school_settings.router)
 
 
 def required_ingest_header_openapi():

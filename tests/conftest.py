@@ -70,10 +70,13 @@ from app.database import AsyncSessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.edge_device import EdgeDevice  # noqa: E402
 from app.models.classroom import Classroom  # noqa: E402
+from app.models.classroom_teacher import ClassroomTeacher  # noqa: E402
 from app.models.school import School  # noqa: E402
 from app.models.system_settings import SystemSettings  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.routers.auth import create_token, pwd_context  # noqa: E402
+from app.services.device_claims import claim_rate_limiter  # noqa: E402
+from app.services.login_rate_limit import login_rate_limiter  # noqa: E402
 
 TEST_DEVICE_CODE = "classroom-test-pi"
 TEST_DEVICE_KEY = "synthetic-device-key-for-tests-only"
@@ -112,6 +115,15 @@ def prevent_external_notifications(monkeypatch):
     return mocked_sender
 
 
+@pytest.fixture(autouse=True)
+def reset_login_rate_limiter():
+    login_rate_limiter.reset()
+    claim_rate_limiter.reset()
+    yield
+    login_rate_limiter.reset()
+    claim_rate_limiter.reset()
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def isolated_database():
     async with engine.begin() as connection:
@@ -143,7 +155,7 @@ async def isolated_database():
                 confidence_threshold=0.55,
                 aggression_duration_threshold=2.0,
                 device_status="offline",
-                vosk_version="local-test",
+                stt_model_version="local-test",
                 yamnet_version="local-test",
             )
         )
@@ -178,6 +190,14 @@ async def identities():
             for role in ("admin", "staff", "counselor")
         }
         session.add_all(users.values())
+        await session.flush()
+        # Teachers see only their rooms' alerts: the school's teacher teaches the test room.
+        classroom = await session.scalar(select(Classroom).where(Classroom.school_id == school.id))
+        session.add(
+            ClassroomTeacher(
+                user_id=users["staff"].id, classroom_id=classroom.id, school_id=school.id
+            )
+        )
         await session.commit()
         for user in users.values():
             await session.refresh(user)
@@ -187,6 +207,7 @@ async def identities():
                 "id": user.id,
                 "email": user.email,
                 "password": f"{role}-password",
+                "school_id": user.school_id,
                 "token": create_token(user),
             }
             for role, user in users.items()
@@ -239,3 +260,62 @@ async def edge_device_identity():
 
 def auth_headers(identity: dict) -> dict[str, str]:
     return {"Authorization": f"Bearer {identity['token']}"}
+
+
+@pytest_asyncio.fixture
+async def org_identities():
+    """A school-less super admin plus admin/staff/counselor accounts in schools A and B."""
+
+    async with AsyncSessionLocal() as session:
+        school_a = await session.scalar(
+            select(School).where(School.name == "Synthetic Test School")
+        )
+        school_b = School(name="Synthetic Second School")
+        session.add(school_b)
+        await session.flush()
+        specs = {
+            "super": ("admin", None, True),
+            "admin_a": ("admin", school_a.id, False),
+            "staff_a": ("staff", school_a.id, False),
+            "counselor_a": ("counselor", school_a.id, False),
+            "admin_b": ("admin", school_b.id, False),
+            "staff_b": ("staff", school_b.id, False),
+        }
+        users = {
+            key: User(
+                email=f"{key}@org.test",
+                hashed_password=pwd_context.hash(f"{key}-password"),
+                role=role,
+                school_id=school_id,
+                is_super_admin=is_super_admin,
+            )
+            for key, (role, school_id, is_super_admin) in specs.items()
+        }
+        session.add_all(users.values())
+        await session.flush()
+        # School A's teacher teaches the test room (where the test device is).
+        classroom_a = await session.scalar(
+            select(Classroom).where(Classroom.school_id == school_a.id)
+        )
+        session.add(
+            ClassroomTeacher(
+                user_id=users["staff_a"].id, classroom_id=classroom_a.id, school_id=school_a.id
+            )
+        )
+        await session.commit()
+        for user in users.values():
+            await session.refresh(user)
+
+        identities = {
+            key: {
+                "id": user.id,
+                "email": user.email,
+                "password": f"{key}-password",
+                "school_id": user.school_id,
+                "token": create_token(user),
+            }
+            for key, user in users.items()
+        }
+        identities["school_a_id"] = school_a.id
+        identities["school_b_id"] = school_b.id
+        return identities

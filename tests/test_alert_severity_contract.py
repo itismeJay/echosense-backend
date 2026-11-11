@@ -513,7 +513,8 @@ async def test_push_provider_failure_leaves_committed_alert_stored(
             User(
                 email="push-failure@example.test",
                 hashed_password="synthetic",
-                role="staff",
+                # A counselor gets every alert of the school (a teacher only their rooms').
+                role="counselor",
                 push_token="ExpoPushToken[synthetic-token]",
                 school_id=school_id,
             )

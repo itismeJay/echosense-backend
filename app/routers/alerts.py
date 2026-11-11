@@ -1,22 +1,27 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.alert import Alert, AlertMatchedTerm
 from app.models.edge_device import EdgeDevice
+from app.models.school_settings import SchoolTerm
 from app.models.slur import SlurEntry
 from app.schemas.alert import (
     AlertCreate,
     AlertResponse,
+    AlertReviewRequest,
+    AlertReviewStatus,
     AlertAnalyticsResponse,
     AlertSummaryResponse,
     PeriodStats,
@@ -24,10 +29,17 @@ from app.schemas.alert import (
     normalize_term,
 )
 from app.notifications.push import send_expo_pushes
-from app.routers.auth import require_alert_reviewer
+from app.routers.auth import require_admin_or_counselor, require_alert_reviewer
 from app.services.notification_recipients import resolve_notification_recipients
 from app.services.device_auth import authenticate_edge_device
-from app.services.school_access import is_global_admin, scope_alert_query
+from app.services.audit import (
+    AuditAction,
+    AuditResource,
+    AuditStatus,
+    record_audit_event,
+)
+from app.services.school_access import scope_alert_query
+from app.services.school_settings import decide_push, get_school_settings
 from typing import List, Optional
 from sqlalchemy.orm import selectinload
 
@@ -35,6 +47,7 @@ from app.config import settings
 from app.languages import LanguageCode
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
+logger = logging.getLogger(__name__)
 
 FINGERPRINT_EXCLUDED_FIELDS = frozenset({"location"})
 
@@ -52,74 +65,112 @@ def hydrate_alert(alert: Alert) -> Alert:
 def alert_load_options():
     return (
         selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.dictionary_term),
+        selectinload(Alert.matched_terms).joinedload(AlertMatchedTerm.school_term),
         selectinload(Alert.edge_device),
     )
+
+
+@dataclass(frozen=True)
+class ResolvedTerm:
+    source: str
+    matched_text: str
+    match_type: str
+    dictionary_term: SlurEntry | None = None
+    school_term: SchoolTerm | None = None
+    reported_language: str | None = None
 
 
 async def resolve_matched_terms(
     requested_terms,
     db: AsyncSession,
-) -> list[tuple[SlurEntry, str, str]]:
+    school_id: UUID | None = None,
+) -> list[ResolvedTerm]:
+    """Link each matched term to the global dictionary or the school's words.
+
+    Never raises: a term neither list holds is stored as "unlisted" text, because an
+    authenticated device's real alert must not be lost over a dictionary gap. Repeated
+    terms are merged. A term_id whose text disagrees with the request falls back to the
+    text, so the stored evidence is always what the device actually heard.
+    """
+
     if not requested_terms:
         return []
 
     result = await db.execute(select(SlurEntry))
     dictionary_entries = list(result.scalars().all())
     entries_by_id = {entry.term_id: entry for entry in dictionary_entries}
-    entries_by_text: dict[str, list[SlurEntry]] = {}
-    for entry in dictionary_entries:
-        entries_by_text.setdefault(normalize_term(entry.slur_text), []).append(entry)
+    entries_by_text: dict[str, SlurEntry] = {}
+    for entry in sorted(dictionary_entries, key=lambda item: item.term_id):
+        entries_by_text.setdefault(normalize_term(entry.slur_text), entry)
 
-    resolved: list[tuple[SlurEntry, str, str]] = []
-    resolved_ids: set[int] = set()
-    for requested in requested_terms:
-        if requested.term_id is not None:
-            entry = entries_by_id.get(requested.term_id)
-            if entry is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Monitored term {requested.term_id} does not exist",
-                )
-        else:
-            matches = entries_by_text.get(normalize_term(requested.term or ""), [])
-            if not matches:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Matched text does not correspond to a monitored term",
-                )
-            if len(matches) > 1:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Matched text is ambiguous; provide term_id",
-                )
-            entry = matches[0]
-
-        if requested.term is not None and normalize_term(requested.term) != normalize_term(
-            entry.slur_text
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Matched text does not correspond to monitored term {entry.term_id}",
-            )
-        if requested.language is not None and requested.language.value != entry.language:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Language does not correspond to monitored term {entry.term_id}",
-            )
-        if entry.term_id in resolved_ids:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Monitored term {entry.term_id} is duplicated",
-            )
-
-        resolved_ids.add(entry.term_id)
-        resolved.append(
-            (
-                entry,
-                (requested.term or entry.slur_text).strip(),
-                requested.match_type,
-            )
+    school_by_id: dict[int, SchoolTerm] = {}
+    school_by_text: dict[str, SchoolTerm] = {}
+    if school_id is not None:
+        school_result = await db.execute(
+            select(SchoolTerm).where(SchoolTerm.school_id == school_id).order_by(SchoolTerm.id)
         )
+        for school_term in school_result.scalars().all():
+            school_by_id[school_term.id] = school_term
+            school_by_text.setdefault(normalize_term(school_term.term_text), school_term)
+
+    resolved: list[ResolvedTerm] = []
+    seen: set[tuple[str, object]] = set()
+    for requested in requested_terms:
+        text = (requested.term or "").strip() or None
+        normalized = normalize_term(text) if text else None
+        entry: SlurEntry | None = None
+        school_term: SchoolTerm | None = None
+
+        if requested.term_id is not None:
+            if requested.source == "school":
+                school_term = school_by_id.get(requested.term_id)
+                if school_term is not None and normalized not in (
+                    None,
+                    normalize_term(school_term.term_text),
+                ):
+                    school_term = None
+            else:
+                entry = entries_by_id.get(requested.term_id)
+                if entry is not None and normalized not in (
+                    None,
+                    normalize_term(entry.slur_text),
+                ):
+                    entry = None
+        if entry is None and school_term is None and normalized:
+            entry = entries_by_text.get(normalized)
+            if entry is None:
+                school_term = school_by_text.get(normalized)
+
+        if entry is not None:
+            key: tuple[str, object] = ("global", entry.term_id)
+            item = ResolvedTerm(
+                "global", (text or entry.slur_text)[:100], requested.match_type, entry
+            )
+        elif school_term is not None:
+            key = ("school", school_term.id)
+            item = ResolvedTerm(
+                "school",
+                (text or school_term.term_text)[:100],
+                requested.match_type,
+                school_term=school_term,
+                # Kept on the row, so the evidence survives the school deleting the word.
+                reported_language=school_term.language,
+            )
+        else:
+            text = text or f"unknown term #{requested.term_id}"
+            key = ("unlisted", normalize_term(text))
+            item = ResolvedTerm(
+                "unlisted",
+                text[:100],
+                requested.match_type,
+                reported_language=(
+                    requested.language.value if requested.language is not None else None
+                ),
+            )
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(item)
 
     return resolved
 
@@ -209,6 +260,7 @@ def legacy_confidence_value(alert: AlertCreate) -> float:
     return 0.0
 
 
+@router.post("", response_model=AlertResponse, include_in_schema=False)
 @router.post("/", response_model=AlertResponse)
 async def create_alert(
     alert: AlertCreate,
@@ -250,7 +302,16 @@ async def create_alert(
     if not classroom.is_active or not classroom.school.is_active:
         raise HTTPException(status_code=409, detail="Device classroom is inactive")
 
-    resolved_terms = await resolve_matched_terms(alert.matched_terms, db)
+    resolved_terms = await resolve_matched_terms(alert.matched_terms, db, classroom.school_id)
+    unlisted_count = sum(1 for item in resolved_terms if item.source == "unlisted")
+    if unlisted_count:
+        # Only counts and the device code: never the words or the transcript.
+        logger.warning(
+            "Alert %s from device %s stored with %d unlisted matched term(s)",
+            alert.event_id,
+            edge_device.device_code,
+            unlisted_count,
+        )
     duration = alert.duration
     if duration is None:
         duration = (alert.event_end_timestamp - alert.event_start_timestamp).total_seconds()
@@ -321,12 +382,15 @@ async def create_alert(
         duration_gate=alert.duration_gate,
         required_duration=alert.required_duration,
     )
-    for dictionary_term, matched_text, match_type in resolved_terms:
+    for item in resolved_terms:
         new_alert.matched_terms.append(
             AlertMatchedTerm(
-                dictionary_term=dictionary_term,
-                matched_text=matched_text,
-                match_type=match_type,
+                source=item.source,
+                dictionary_term=item.dictionary_term,
+                school_term=item.school_term,
+                reported_language=item.reported_language,
+                matched_text=item.matched_text,
+                match_type=item.match_type,
             )
         )
     db.add(new_alert)
@@ -344,7 +408,31 @@ async def create_alert(
     )
     new_alert = result.scalar_one()
 
-    recipients = await resolve_notification_recipients(db, school_id=new_alert.school_id)
+    if new_alert.school_id is not None:
+        school_settings = await get_school_settings(db, new_alert.school_id)
+        decision = decide_push(
+            school_settings,
+            new_alert.severity,
+            new_alert.event_start_timestamp
+            or new_alert.trigger_timestamp
+            or datetime.now(timezone.utc),
+        )
+    else:
+        decision = None
+    if decision is not None and not decision.send:
+        # Stored and visible on the dashboard, but nobody's phone is woken for it.
+        new_alert.push_status = "skipped"
+        new_alert.push_last_error = decision.reason
+        new_alert.outside_school_hours = decision.outside_school_hours
+        await db.commit()
+        return hydrate_alert(new_alert)
+
+    recipients = await resolve_notification_recipients(
+        db,
+        school_id=new_alert.school_id,
+        for_alert=True,
+        classroom_id=new_alert.classroom_id,
+    )
     if not recipients.controlled_test_mode or recipients.failure_reason is None:
         asyncio.create_task(
             send_expo_pushes(
@@ -368,10 +456,11 @@ async def create_alert(
 
 @router.get("/analytics/categories", response_model=AlertAnalyticsResponse)
 async def get_category_analytics(
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_alert_reviewer),
+    current_user=Depends(require_admin_or_counselor),
 ):
-    result = await db.execute(scope_alert_query(select(Alert), current_user))
+    result = await db.execute(scope_alert_query(select(Alert), current_user, school_id))
     alerts = result.scalars().all()
 
     by_category: dict = {}
@@ -451,14 +540,15 @@ def _period_stats(alerts: list) -> PeriodStats:
 
 @router.get("/analytics/summary", response_model=AlertSummaryResponse)
 async def get_summary_analytics(
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_alert_reviewer),
+    current_user=Depends(require_admin_or_counselor),
 ):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
 
-    all_result = await db.execute(scope_alert_query(select(Alert), current_user))
+    all_result = await db.execute(scope_alert_query(select(Alert), current_user, school_id))
     all_alerts = all_result.scalars().all()
 
     today_alerts = [
@@ -479,6 +569,7 @@ async def get_summary_analytics(
     )
 
 
+@router.get("", response_model=List[AlertResponse], include_in_schema=False)
 @router.get("/", response_model=List[AlertResponse])
 async def get_alerts(
     event_id: UUID | None = None,
@@ -489,25 +580,26 @@ async def get_alerts(
     category: Optional[str] = None,
     language: Optional[LanguageCode] = None,
     duration_gate: Optional[str] = None,
+    status: AlertReviewStatus | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_alert_reviewer),
 ):
-    query = scope_alert_query(select(Alert), current_user)
+    query = scope_alert_query(select(Alert), current_user, school_id)
+    if status is not None:
+        query = query.where(Alert.status == status)
+    if date_from is not None:
+        query = query.where(Alert.created_at >= _aware(date_from))
+    if date_to is not None:
+        query = query.where(Alert.created_at < _aware(date_to))
     query = query.options(*alert_load_options()).order_by(Alert.created_at.desc())
     if event_id is not None:
         query = query.where(Alert.event_id == event_id)
     if classroom_id is not None:
         query = query.where(Alert.classroom_id == classroom_id)
-    if school_id is not None:
-        if (
-            not is_global_admin(current_user)
-            and current_user.school_id is not None
-            and school_id != current_user.school_id
-        ):
-            raise HTTPException(status_code=403, detail="School access denied")
-        query = query.where(Alert.school_id == school_id)
     if device_id is not None:
         query = query.where(Alert.edge_device_id == device_id)
     if severity:
@@ -529,6 +621,52 @@ async def get_alerts(
         query = query.limit(limit)
     result = await db.execute(query)
     return [hydrate_alert(a) for a in result.scalars().all()]
+
+
+def _aware(value: datetime) -> datetime:
+    """Treat a timestamp without a zone as UTC."""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+@router.post("/{alert_id}/review", response_model=AlertResponse)
+async def review_alert(
+    request: Request,
+    alert_id: int,
+    body: AlertReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_alert_reviewer),
+):
+    """Mark an alert reviewed or resolved. Anyone who can read the alert may review it."""
+    result = await db.execute(
+        scope_alert_query(select(Alert), current_user)
+        .where(Alert.id == alert_id)
+        .options(*alert_load_options())
+        .with_for_update(of=Alert)
+    )
+    alert = result.scalar_one_or_none()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    previous = alert.status
+    if previous != body.status:
+        alert.status = body.status
+        await record_audit_event(
+            db,
+            request,
+            AuditAction.REVIEW_ALERT,
+            AuditResource.ALERT,
+            AuditStatus.SUCCESS,
+            actor=current_user,
+            resource_id=alert.id,
+            target=alert.classroom_name_snapshot or alert.location,
+            description="User changed an alert's review status.",
+            metadata={"previous_status": previous, "new_status": body.status},
+            school_id=alert.school_id,
+        )
+        await db.commit()
+    result = await db.execute(
+        select(Alert).where(Alert.id == alert_id).options(*alert_load_options())
+    )
+    return hydrate_alert(result.scalar_one())
 
 
 @router.get("/{alert_id}", response_model=AlertResponse)

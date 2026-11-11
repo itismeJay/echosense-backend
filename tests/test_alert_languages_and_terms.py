@@ -170,7 +170,7 @@ async def test_alert_with_multiple_matched_terms_resolves_missing_ids(client):
 
 
 @pytest.mark.asyncio
-async def test_nonexistent_term_id_is_rejected(client):
+async def test_nonexistent_term_id_is_stored_not_rejected(client):
     response = await client.post(
         "/alerts/",
         json=_alert_payload(
@@ -179,12 +179,20 @@ async def test_nonexistent_term_id_is_rejected(client):
         ),
     )
 
-    assert response.status_code == 422
-    assert "does not exist" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["matched_terms"] == []
+    assert response.json()["unlisted_terms"] == [
+        {
+            "term": "unknown term #999999",
+            "language": None,
+            "match_type": "exact",
+            "source": "unlisted",
+        }
+    ]
 
 
 @pytest.mark.asyncio
-async def test_client_dictionary_data_must_match_existing_term(client):
+async def test_term_id_with_different_text_keeps_what_the_device_heard(client):
     terms = await _seed_terms()
     response = await client.post(
         "/alerts/",
@@ -200,11 +208,37 @@ async def test_client_dictionary_data_must_match_existing_term(client):
         ),
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["matched_terms"] == []
+    assert response.json()["unlisted_terms"] == [
+        {"term": "invented phrase", "language": "fil", "match_type": "exact", "source": "unlisted"}
+    ]
 
 
 @pytest.mark.asyncio
-async def test_duplicate_matched_term_is_rejected_by_api(client):
+async def test_language_disagreement_still_links_the_dictionary_term(client):
+    terms = await _seed_terms()
+    response = await client.post(
+        "/alerts/",
+        json=_alert_payload(
+            language="fil",
+            matched_terms=[{"term": "pananglitan nga pulong", "language": "fil"}],
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["matched_terms"] == [
+        {
+            "term_id": terms["ceb"].term_id,
+            "term": "pananglitan nga pulong",
+            "language": "ceb",
+            "match_type": "exact",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_matched_terms_are_merged(client):
     terms = await _seed_terms()
     response = await client.post(
         "/alerts/",
@@ -216,12 +250,15 @@ async def test_duplicate_matched_term_is_rejected_by_api(client):
                     "term": "HALIMBAWANG SALITA",
                     "language": "fil",
                 },
+                {"term": "buanga"},
+                {"term": " Buanga "},
             ],
         ),
     )
 
-    assert response.status_code == 422
-    assert "duplicated" in response.json()["detail"]
+    assert response.status_code == 200
+    assert [item["term_id"] for item in response.json()["matched_terms"]] == [terms["fil"].term_id]
+    assert [item["term"] for item in response.json()["unlisted_terms"]] == ["buanga"]
 
 
 @pytest.mark.asyncio

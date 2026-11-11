@@ -82,6 +82,34 @@ on first ingestion. Historical alerts remain readable with null device
 context. Existing `event_id`, evidence, severity, review notice, timestamps,
 and notification behavior are unchanged.
 
+## Other edge calls (heartbeat, log upload, dictionary sync)
+
+`POST /system-settings/heartbeat`, `POST /system/logs` and `GET /dictionary/`
+require the same two headers (the dictionary also accepts a signed-in admin's
+bearer token for the dashboard). Wrong credentials are always 401/403. A call
+with no credentials is 401, unless `ECHOSENSE_ALLOW_ANONYMOUS_EDGE=true`: a
+switch-over setting that keeps edges older than 2026-11-05 working (they sent no
+credentials on log upload and dictionary sync). Turn it off once every edge is
+updated.
+
+Authenticated heartbeats may also report the device's non-secret Wi-Fi state:
+
+```json
+{
+  "ssid": "School Staff",
+  "wifi_status": "connected",
+  "wifi_change_method": "local_portal",
+  "wifi_local_url": "http://192.168.50.8/",
+  "wifi_remote_scan_supported": false
+}
+```
+
+The backend stores only status, SSID, and a validated private IPv4 portal URL.
+Administrator-only device responses expose those fields for the classroom Wi-Fi
+Settings panel. The heartbeat rejects password, PSK, remote-scan, HTTPS, public,
+hostname, credential-bearing, and non-root portal values. Wi-Fi credentials and
+network scanning remain exclusively on the authenticated Pi-local portal.
+
 ## Disable or rotate
 
 Disable a lost device without deleting it:

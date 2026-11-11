@@ -1,12 +1,25 @@
 import re
+from ipaddress import IPv4Address, IPv4Network, ip_address
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEVICE_KEY_WARNING = "Store this key securely. It will not be shown again."
+# unclaimed: provisioned, ready to add. claimed: in a room, waiting for the box.
+# active: the box holds its key. disabled: switched off. removed: needs a super-admin reset.
+DeviceLifecycleStatus = Literal["unclaimed", "claimed", "active", "disabled", "removed"]
+WifiConnectionStatus = Literal["connected", "disconnected"]
 DEVICE_CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{2,99}$")
+LOCAL_WIFI_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+    IPv4Network("169.254.0.0/16"),
+    IPv4Network("100.64.0.0/10"),
+)
 
 
 def _normalize_required_name(value: str) -> str:
@@ -105,9 +118,15 @@ class EdgeDeviceResponse(BaseModel):
     classroom_name: str | None
     assignment_state: Literal["assigned", "unassigned"]
     is_active: bool
+    status: DeviceLifecycleStatus = "active"
+    claimed_at: datetime | None = None
+    activated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     last_seen_at: datetime | None
+    wifi_status: WifiConnectionStatus | None = None
+    wifi_ssid: str | None = None
+    wifi_local_url: str | None = None
     assigned_at: datetime | None
     key_rotated_at: datetime | None
 
@@ -119,3 +138,86 @@ class EdgeDeviceKeyResponse(BaseModel):
         repr=False,
     )
     warning: Literal["Store this key securely. It will not be shown again."] = DEVICE_KEY_WARNING
+
+
+class DeviceStatusItem(BaseModel):
+    """What staff need to know about a classroom device: where it is and if it's online."""
+
+    id: UUID
+    display_name: str
+    device_code: str
+    school_id: UUID | None
+    school_name: str | None
+    classroom_id: UUID | None
+    classroom_name: str | None
+    is_active: bool
+    status: DeviceLifecycleStatus = "active"
+    last_seen_at: datetime | None
+    online: bool
+
+
+class DeviceStatusResponse(BaseModel):
+    checked_at: datetime
+    online_window_seconds: int
+    devices: list[DeviceStatusItem]
+
+
+class DeviceHeartbeat(BaseModel):
+    """Non-secret network status accepted from an authenticated edge device."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ssid: str | None = None
+    wifi_status: WifiConnectionStatus | None = None
+    wifi_change_method: Literal["local_portal"] | None = None
+    wifi_local_url: str | None = None
+    wifi_remote_scan_supported: Literal[False] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_wifi_secrets(cls, value):
+        if isinstance(value, dict):
+            keys = {str(key).casefold().replace("-", "_") for key in value}
+            forbidden = {"password", "wifi_password", "psk", "pre_shared_key"}
+            if keys & forbidden:
+                raise ValueError("Wi-Fi credentials are not accepted by the heartbeat API")
+        return value
+
+    @field_validator("ssid", mode="before")
+    @classmethod
+    def validate_ssid(cls, value):
+        if value is None or str(value).casefold() == "unknown":
+            return None
+        if not isinstance(value, str):
+            raise ValueError("SSID must be text")
+        if len(value.encode("utf-8")) > 32:
+            raise ValueError("SSID must be at most 32 UTF-8 bytes")
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("SSID must not contain control characters")
+        return value
+
+    @field_validator("wifi_local_url")
+    @classmethod
+    def validate_local_portal_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Wi-Fi portal URL must be a local HTTP root URL")
+        try:
+            host = ip_address(parsed.hostname or "")
+        except ValueError as exc:
+            raise ValueError("Wi-Fi portal URL must use a private IPv4 address") from exc
+        if not isinstance(host, IPv4Address) or not any(
+            host in network for network in LOCAL_WIFI_NETWORKS
+        ):
+            raise ValueError("Wi-Fi portal URL must use a private IPv4 address")
+        return f"http://{host}/"

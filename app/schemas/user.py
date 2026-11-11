@@ -1,13 +1,39 @@
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+
+
+# Deliberately simple: one "@", no whitespace, and a dotted domain. EmailStr is not used
+# because email-validator rejects the special-use .local/.test domains used locally.
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]+$")
+PASSWORD_MIN_LENGTH = 8
+# bcrypt only hashes the first 72 bytes and newer releases reject longer input.
+PASSWORD_MAX_BYTES = 72
+
+
+def normalize_email(value: str) -> str:
+    return value.strip().lower()
+
+
+def validate_new_password(value: str) -> str:
+    if len(value) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"password must be at least {PASSWORD_MIN_LENGTH} characters")
+    if len(value.encode("utf-8")) > PASSWORD_MAX_BYTES:
+        raise ValueError(f"password must be at most {PASSWORD_MAX_BYTES} bytes")
+    return value
 
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def strip_email(cls, value: str) -> str:
+        return value.strip()
 
 
 class UserOut(BaseModel):
@@ -18,6 +44,10 @@ class UserOut(BaseModel):
     role: str
     school_id: UUID | None = None
     is_super_admin: bool = False
+    must_change_password: bool = False
+    # Teachers only: the classrooms whose alerts they see and are pushed. Filled in by
+    # the People list and the assignment endpoint; other responses leave it empty.
+    classroom_ids: list[UUID] = Field(default_factory=list)
 
     @field_validator("id", mode="before")
     @classmethod
@@ -25,24 +55,70 @@ class UserOut(BaseModel):
         return str(value)
 
 
+class TeacherClassroomsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    classroom_ids: list[UUID] = Field(max_length=200)
+
+
+class PasswordResetResponse(BaseModel):
+    """Shown once to the administrator; the person must change it at next sign-in."""
+
+    user: UserOut
+    temporary_password: str
+
+
 class RegisterRequest(BaseModel):
-    email: str
+    email: str = Field(max_length=254)
     password: str
     role: Literal["admin", "staff", "counselor"] = "staff"
     school_id: UUID | None = None
-    is_super_admin: bool = False
+    # Strict: only a JSON true creates a super admin, never "true", 1 or "on".
+    is_super_admin: StrictBool = False
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = normalize_email(value)
+        if not EMAIL_PATTERN.fullmatch(normalized):
+            raise ValueError("email must be a valid email address")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_new_password(value)
 
     @model_validator(mode="after")
     def validate_super_admin_role(self):
         if self.is_super_admin and self.role != "admin":
             raise ValueError("is_super_admin requires role=admin")
+        if self.is_super_admin and self.school_id is not None:
+            raise ValueError("a super admin cannot belong to a school")
         return self
 
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
     user: UserOut
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_new_password(value)
+
+    @model_validator(mode="after")
+    def require_different_password(self):
+        if self.new_password == self.current_password:
+            raise ValueError("new_password must differ from current_password")
+        return self
 
 
 class PushTokenRequest(BaseModel):

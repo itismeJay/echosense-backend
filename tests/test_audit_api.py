@@ -147,6 +147,7 @@ async def test_user_create_delete_are_atomic_and_actor_snapshot_survives(
             "email": "temporary.teacher@school.test",
             "password": "temporary-password",
             "role": "staff",
+            "school_id": str(identities["admin"]["school_id"]),
         },
     )
     assert created.status_code == 201
@@ -160,7 +161,7 @@ async def test_user_create_delete_are_atomic_and_actor_snapshot_survives(
     assert all(event.actor_user_id == identities["admin"]["id"] for event in events)
     assert all(event.actor_email == identities["admin"]["email"] for event in events)
     assert events[0].resource_id == user_id
-    assert events[0].metadata_json == {"role": "staff"}
+    assert events[0].metadata_json == {"role": "staff", "is_super_admin": False}
     assert events[1].target == "temporary.teacher@school.test"
 
 
@@ -206,17 +207,20 @@ async def test_monitored_term_and_settings_changes_are_audited_without_heartbeat
     deleted = await client.delete(f"/dictionary/{term_id}", headers=headers)
     assert deleted.status_code == 200
 
-    no_change = await client.put(
-        "/system-settings/",
+    school_id = str(identities["admin"]["school_id"])
+    no_change = await client.patch(
+        "/school-settings",
+        params={"school_id": school_id},
         headers=headers,
-        json={"confidence_threshold": 0.55},
+        json={"sensitivity": "normal"},
     )
     assert no_change.status_code == 200
 
-    changed = await client.put(
-        "/system-settings/",
+    changed = await client.patch(
+        "/school-settings",
+        params={"school_id": school_id},
         headers=headers,
-        json={"confidence_threshold": 0.85},
+        json={"sensitivity": "strict"},
     )
     assert changed.status_code == 200
 
@@ -227,13 +231,14 @@ async def test_monitored_term_and_settings_changes_are_audited_without_heartbeat
     assert [event.action for event in events] == [
         "ADD_MONITORED_TERM",
         "DELETE_MONITORED_TERM",
-        "UPDATE_SETTINGS",
+        "UPDATE_SCHOOL_SETTINGS",
     ]
     settings_event = events[-1]
+    assert str(settings_event.school_id) == school_id
     assert settings_event.metadata_json == {
-        "changed_fields": ["confidence_threshold"],
-        "new_values": {"confidence_threshold": 0.85},
-        "previous_values": {"confidence_threshold": 0.55},
+        "changed_fields": ["sensitivity"],
+        "new_values": {"sensitivity": "strict"},
+        "previous_values": {"sensitivity": "normal"},
     }
 
 

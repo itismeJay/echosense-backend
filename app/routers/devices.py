@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -13,10 +13,12 @@ from app.models.classroom import Classroom
 from app.models.edge_device import EdgeDevice
 from app.models.school import School
 from app.models.user import User
-from app.routers.auth import require_admin
+from app.routers.auth import require_admin, require_alert_reviewer
 from app.schemas.edge_device import (
     DEVICE_KEY_WARNING,
     DeviceAssignmentRequest,
+    DeviceStatusItem,
+    DeviceStatusResponse,
     EdgeDeviceCreate,
     EdgeDeviceKeyResponse,
     EdgeDeviceResponse,
@@ -28,8 +30,20 @@ from app.services.audit import (
     AuditStatus,
     record_audit_event,
 )
-from app.services.device_auth import hash_device_key
-from app.services.school_access import is_global_admin, require_school_access
+from app.schemas.school_settings import DeviceConfigOut
+from app.services.device_auth import authenticate_edge_device, hash_device_key
+from app.services.school_settings import (
+    config_version,
+    disabled_global_term_texts,
+    effective_terms,
+    get_school_settings,
+)
+from app.services.device_status import ONLINE_WINDOW_SECONDS, is_device_online
+from app.services.school_access import (
+    is_global_admin,
+    require_school_access,
+    resolve_school_scope,
+)
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -145,6 +159,7 @@ async def _registration_assignment(
     return school, None
 
 
+@router.post("/", response_model=EdgeDeviceKeyResponse, status_code=201, include_in_schema=False)
 @router.post("", response_model=EdgeDeviceKeyResponse, status_code=201)
 async def create_device(
     request: Request,
@@ -169,6 +184,7 @@ async def create_device(
         legacy_school_name=school.name,
         assigned_at=datetime.now(timezone.utc) if classroom is not None else None,
         api_key_hash=hash_device_key(device_key),
+        claim_state="active",
     )
     db.add(device)
     try:
@@ -198,6 +214,7 @@ async def create_device(
     )
 
 
+@router.get("/", response_model=list[EdgeDeviceResponse], include_in_schema=False)
 @router.get("", response_model=list[EdgeDeviceResponse])
 async def list_devices(
     school_id: UUID | None = None,
@@ -229,6 +246,84 @@ async def list_devices(
         query = query.where(EdgeDevice.classroom_id.is_not(None))
     devices = list((await db.execute(query.order_by(EdgeDevice.device_code))).scalars().all())
     return [_device_response(device) for device in devices]
+
+
+@router.get("/status", response_model=DeviceStatusResponse)
+async def device_status(
+    school_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_alert_reviewer),
+):
+    """Online/offline for each classroom device, from its own last check-in.
+
+    Open to every signed-in role (the Overview shows it to teachers too), limited to the
+    caller's school; super admins may pass school_id or see every school.
+    """
+
+    scoped = resolve_school_scope(current_user, school_id)
+    query = select(EdgeDevice).options(
+        joinedload(EdgeDevice.classroom), joinedload(EdgeDevice.school)
+    )
+    if scoped is not None:
+        query = query.where(EdgeDevice.school_id == scoped)
+    elif not is_global_admin(current_user):
+        query = query.where(false())
+    devices = (await db.execute(query.order_by(EdgeDevice.display_name))).scalars().all()
+    now = datetime.now(timezone.utc)
+    return DeviceStatusResponse(
+        checked_at=now,
+        online_window_seconds=ONLINE_WINDOW_SECONDS,
+        devices=[
+            DeviceStatusItem(
+                id=device.id,
+                display_name=device.display_name,
+                device_code=device.device_code,
+                school_id=device.school_id,
+                school_name=device.school.name if device.school else None,
+                classroom_id=device.classroom_id,
+                classroom_name=device.classroom.name if device.classroom else None,
+                is_active=device.is_active,
+                status=device.status,
+                last_seen_at=device.last_seen_at,
+                online=device.is_active and is_device_online(device.last_seen_at, now),
+            )
+            for device in devices
+        ],
+    )
+
+
+@router.get("/me/config", response_model=DeviceConfigOut)
+async def get_my_device_config(
+    db: AsyncSession = Depends(get_db),
+    device: EdgeDevice = Depends(authenticate_edge_device),
+):
+    """The effective detection config for the calling device's school.
+
+    terms = global dictionary minus the school's disabled terms, plus the school's own
+    terms; disabled_terms lists the global words the school turned off. config_version
+    changes whenever terms, disabled terms or sensitivity change.
+    """
+
+    if device.school_id is None:
+        raise HTTPException(status_code=409, detail="Device is not assigned to a school")
+    settings = await get_school_settings(db, device.school_id)
+    terms = await effective_terms(db, device.school_id)
+    disabled_terms = await disabled_global_term_texts(db, device.school_id)
+    await db.commit()
+    versioned = {
+        "sensitivity": settings.sensitivity,
+        "terms": terms,
+        "disabled_terms": disabled_terms,
+    }
+    return DeviceConfigOut(
+        device_code=device.device_code,
+        school_id=device.school_id,
+        sensitivity=settings.sensitivity,
+        terms=terms,
+        disabled_terms=disabled_terms,
+        config_version=config_version(versioned),
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 @router.get("/{device_id}", response_model=EdgeDeviceResponse)
@@ -418,11 +513,19 @@ async def rotate_device_key(
     current_user: User = Depends(require_admin),
 ):
     device = await _get_device(device_id, db, current_user, for_update=True)
+    if device.claim_state == "unclaimed":
+        raise HTTPException(status_code=409, detail="Add this box to a classroom first")
     device_key = _generate_device_key()
     now = datetime.now(timezone.utc)
     device.api_key_hash = hash_device_key(device_key)
     device.key_rotated_at = now
     device.updated_at = now
+    if device.claim_state != "active":
+        # Advanced/manual setup of a claimed box: the typed key replaces QR activation.
+        device.claim_state = "active"
+        device.claim_code_hash = None
+        device.box_secret_hash = None
+        device.activated_at = now
     await record_audit_event(
         db,
         request,

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import Date, cast, false, func, select
 from typing import List
@@ -7,71 +9,58 @@ from app.models.report import Report
 from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.report import ReportCreate, ReportOut
-from app.routers.auth import get_current_user
+from app.routers.auth import require_admin_or_counselor
 from app.services.audit import (
     AuditAction,
     AuditResource,
     AuditStatus,
     record_audit_event,
 )
-from app.services.school_access import is_global_admin, scope_alert_query
+from app.services.school_access import (
+    is_global_admin,
+    resolve_school_scope,
+    scope_alert_query,
+)
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
-async def require_admin_or_counselor(
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    if current_user.role not in ("admin", "counselor"):
-        await record_audit_event(
-            db,
-            request,
-            AuditAction.PERMISSION_DENIED,
-            AuditResource.SECURITY,
-            AuditStatus.FAILURE,
-            actor=current_user,
-            target=request.url.path,
-            description="User was denied access to a restricted report operation.",
-            metadata={"method": request.method},
-        )
-        await db.commit()
-        raise HTTPException(status_code=403, detail="Admin or counselor access required")
-    return current_user
-
-
+@router.get("", response_model=List[ReportOut], include_in_schema=False)
 @router.get("/", response_model=List[ReportOut])
 async def get_reports(
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_counselor),
 ):
     query = select(Report).order_by(Report.generated_at.desc())
-    if not is_global_admin(current_user):
-        if current_user.school_id is None:
-            query = query.where(false())
-        else:
-            query = query.where(Report.school_id == current_user.school_id)
+    scoped = resolve_school_scope(current_user, school_id)
+    if scoped is not None:
+        query = query.where(Report.school_id == scoped)
+    elif not is_global_admin(current_user):
+        query = query.where(false())
     result = await db.execute(query)
     return result.scalars().all()
 
 
+@router.post("", response_model=ReportOut, status_code=201, include_in_schema=False)
 @router.post("/", response_model=ReportOut, status_code=201)
 async def generate_report(
     request: Request,
     body: ReportCreate,
+    school_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_counselor),
 ):
+    # A super admin inside a school reports on that school; without one, on all schools.
+    report_school_id = resolve_school_scope(current_user, school_id)
     count_result = await db.execute(
-        scope_alert_query(select(func.count(Alert.id)), current_user).where(
+        scope_alert_query(select(func.count(Alert.id)), current_user, school_id).where(
             cast(Alert.created_at, Date) >= body.date_from,
             cast(Alert.created_at, Date) <= body.date_to,
         )
     )
     total = count_result.scalar() or 0
 
-    report_school_id = None if is_global_admin(current_user) else current_user.school_id
     report = Report(
         generated_by=current_user.id,
         generated_by_email=current_user.email,

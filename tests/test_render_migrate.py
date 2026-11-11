@@ -101,6 +101,30 @@ def _seed_legacy_rows(database_url: str) -> None:
     engine.dispose()
 
 
+def _seeded_dictionary_texts() -> set[str]:
+    """Every distinct term revisions 0011 and 0015 insert into an empty dictionary."""
+
+    import importlib.util
+    from pathlib import Path
+
+    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    texts: set[str] = set()
+    for name in (
+        "20261021_0011_seed_settings_and_default_dictionary",
+        "20261105_0015_seed_bisaya_lexicon_dictionary",
+    ):
+        spec = importlib.util.spec_from_file_location(name, versions / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for terms in (
+            getattr(module, "LEGACY_TERMS", ()),
+            getattr(module, "EDGE_TERMS", ()),
+            getattr(module, "LEXICON_TERMS", ()),
+        ):
+            texts.update(term[0] for term in terms)
+    return texts
+
+
 def _revision(database_url: str) -> str:
     engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
     with engine.connect() as connection:
@@ -229,26 +253,29 @@ def test_existing_alerts_and_dictionary_remain_readable_after_migration(
                 """
             )
         ).all()
-        dictionary_languages = (
-            connection.execute(
-                sa.text(
-                    """
-                SELECT language
+        dictionary_rows = connection.execute(
+            sa.text(
+                """
+                SELECT slur_text, language
                 FROM slur_dictionary
                 ORDER BY term_id
                 """
-                )
             )
-            .scalars()
-            .all()
-        )
+        ).all()
     engine.dispose()
 
     assert alerts == [
         ("MEDIUM", "unknown", None),
         ("HIGH", "ceb", None),
     ]
-    assert dictionary_languages == ["fil", "ceb", "en"]
+    # Pre-existing terms survive with normalized languages; revisions 0011 (default
+    # dictionary) and 0015 (Bisaya lexicon) then append after them without touching them.
+    assert dictionary_rows[:3] == [
+        ("legacy-fil", "fil"),
+        ("legacy-ceb", "ceb"),
+        ("legacy-en", "en"),
+    ]
+    assert len(dictionary_rows) == 3 + len(_seeded_dictionary_texts())
 
 
 def test_edge_audio_event_migration_upgrades_downgrades_and_upgrades_again(
@@ -420,7 +447,9 @@ def test_edge_device_migration_preserves_historical_alerts_and_downgrades(
         ).one()
 
     assert device_columns["id"]["nullable"] is False
-    assert device_columns["api_key_hash"]["nullable"] is False
+    # Since 0018 (QR setup) unclaimed and waiting boxes have no key yet; key auth still
+    # requires claim_state='active', which a check constraint ties to a non-null key.
+    assert device_columns["api_key_hash"]["nullable"] is True
     assert alert_columns["edge_device_id"]["nullable"] is True
     assert any(
         foreign_key["constrained_columns"] == ["edge_device_id"]
@@ -774,3 +803,71 @@ def test_multi_room_backfill_keeps_known_school_without_guessing_classroom(
     ]
     assert device_rows == expected_devices
     assert alert_rows == expected_alerts
+
+
+VOSK_DEFAULT = "vosk-model-small-en-us-0.15"
+FASTER_WHISPER_DEFAULT = "faster-whisper small int8"
+
+
+def _settings_columns(database_url: str) -> set[str]:
+    engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
+    with engine.connect() as connection:
+        columns = {
+            column["name"] for column in sa.inspect(connection).get_columns("system_settings")
+        }
+    engine.dispose()
+    return columns
+
+
+def _stt_values(database_url: str, column: str) -> list[str]:
+    engine = sa.create_engine(_sync_url(database_url), poolclass=NullPool)
+    with engine.connect() as connection:
+        values = connection.execute(
+            sa.text(f"SELECT {column} FROM system_settings ORDER BY setting_id")
+        ).scalars()
+        result = list(values)
+    engine.dispose()
+    return result
+
+
+def test_fresh_database_ends_with_stt_model_version(disposable_database, monkeypatch):
+    _upgrade_to(disposable_database, "head", monkeypatch)
+
+    columns = _settings_columns(disposable_database)
+
+    assert "stt_model_version" in columns and "vosk_version" not in columns
+    assert _stt_values(disposable_database, "stt_model_version") == [FASTER_WHISPER_DEFAULT]
+
+
+def test_rename_replaces_only_the_old_default_and_downgrade_reverses_it(
+    disposable_database, monkeypatch
+):
+    _upgrade_to(disposable_database, "20261021_0011", monkeypatch)
+    engine = sa.create_engine(_sync_url(disposable_database), poolclass=NullPool)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text("UPDATE system_settings SET vosk_version = :value"), {"value": VOSK_DEFAULT}
+        )
+        connection.execute(
+            sa.text("INSERT INTO system_settings (vosk_version) VALUES ('admin-custom-model')")
+        )
+    engine.dispose()
+
+    _upgrade_to(disposable_database, "20261021_0012", monkeypatch)
+    assert _stt_values(disposable_database, "stt_model_version") == [
+        FASTER_WHISPER_DEFAULT,
+        "admin-custom-model",
+    ]
+
+    _downgrade_to(disposable_database, "20261021_0011", monkeypatch)
+    assert "stt_model_version" not in _settings_columns(disposable_database)
+    assert _stt_values(disposable_database, "vosk_version") == [
+        VOSK_DEFAULT,
+        "admin-custom-model",
+    ]
+
+    _upgrade_to(disposable_database, "20261021_0012", monkeypatch)
+    assert _stt_values(disposable_database, "stt_model_version") == [
+        FASTER_WHISPER_DEFAULT,
+        "admin-custom-model",
+    ]

@@ -1,14 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from typing import List
 from app.database import get_db
+from app.languages import DictionaryLanguageCode
 from app.models.slur import SlurEntry as SlurModel
 from app.models.user import User
 from app.schemas.dictionary import SlurEntry, SlurCreate
 from app.schemas.alert import normalize_term
 from app.models.alert import AlertMatchedTerm
-from app.routers.auth import require_admin
+from app.models.edge_device import EdgeDevice
+from app.services.device_auth import (
+    DEVICE_ID_HEADER,
+    DEVICE_KEY_HEADER,
+    edge_device_or_transition,
+)
+from app.routers.auth import (
+    get_authenticated_user,
+    get_current_user,
+    require_admin,
+    require_super_admin,
+)
+from app.services.query_filters import escape_like
 from app.services.audit import (
     AuditAction,
     AuditResource,
@@ -18,19 +31,69 @@ from app.services.audit import (
 
 router = APIRouter(prefix="/dictionary", tags=["Dictionary"])
 
+TOTAL_COUNT_HEADER = "X-Total-Count"
 
+
+async def require_dictionary_reader(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    device_code: str | None = Header(default=None, alias=DEVICE_ID_HEADER),
+    device_key: str | None = Header(default=None, alias=DEVICE_KEY_HEADER),
+    db: AsyncSession = Depends(get_db),
+) -> User | EdgeDevice | None:
+    """An admin (dashboard) or an authenticated edge device (dictionary sync).
+
+    A signed-in reader must be an admin. Otherwise device credentials are required; a call
+    with neither is refused unless ECHOSENSE_ALLOW_ANONYMOUS_EDGE is on for old edges.
+    """
+    if authorization is not None:
+        user = await get_current_user(await get_authenticated_user(authorization, db))
+        return await require_admin(request, user, db)
+    return await edge_device_or_transition(device_code, device_key, db)
+
+
+@router.get("", response_model=List[SlurEntry], include_in_schema=False)
 @router.get("/", response_model=List[SlurEntry])
-async def get_dictionary(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SlurModel).order_by(SlurModel.severity_weight.desc()))
+async def get_dictionary(
+    response: Response,
+    search: str | None = Query(default=None, max_length=100),
+    language: DictionaryLanguageCode | None = None,
+    skip: int = Query(default=0, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    _: User | EdgeDevice | None = Depends(require_dictionary_reader),
+):
+    # Without parameters this still returns every term as a plain list, which the edge's
+    # (device-authenticated) dictionary sync relies on. X-Total-Count reports the filtered total for paging.
+    conditions = []
+    if search and search.strip():
+        pattern = f"%{escape_like(normalize_term(search))}%"
+        conditions.append(SlurModel.slur_text.ilike(pattern, escape="\\"))
+    if language is not None:
+        conditions.append(SlurModel.language == language.value)
+
+    total = await db.scalar(select(func.count(SlurModel.term_id)).where(*conditions))
+    response.headers[TOTAL_COUNT_HEADER] = str(total)
+
+    query = (
+        select(SlurModel)
+        .where(*conditions)
+        .order_by(SlurModel.severity_weight.desc(), SlurModel.term_id)
+        .offset(skip)
+    )
+    if limit is not None:
+        query = query.limit(limit)
+    result = await db.execute(query)
     return result.scalars().all()
 
 
+@router.post("", response_model=SlurEntry, status_code=201, include_in_schema=False)
 @router.post("/", response_model=SlurEntry, status_code=201)
 async def add_slur(
     request: Request,
     body: SlurCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
 ):
     normalized_text = normalize_term(body.slur_text)
     existing = await db.execute(select(SlurModel))
@@ -71,7 +134,7 @@ async def delete_slur(
     request: Request,
     term_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
 ):
     result = await db.execute(select(SlurModel).where(SlurModel.term_id == term_id))
     entry = result.scalar_one_or_none()
