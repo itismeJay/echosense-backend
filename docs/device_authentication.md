@@ -92,6 +92,24 @@ switch-over setting that keeps edges older than 2026-11-05 working (they sent no
 credentials on log upload and dictionary sync). Turn it off once every edge is
 updated.
 
+Authenticated heartbeats may also report the device's non-secret Wi-Fi state:
+
+```json
+{
+  "ssid": "School Staff",
+  "wifi_status": "connected",
+  "wifi_change_method": "local_portal",
+  "wifi_local_url": "http://192.168.50.8/",
+  "wifi_remote_scan_supported": false
+}
+```
+
+The backend stores only status, SSID, and a validated private IPv4 portal URL.
+Administrator-only device responses expose those fields for the classroom Wi-Fi
+Settings panel. The heartbeat rejects password, PSK, remote-scan, HTTPS, public,
+hostname, credential-bearing, and non-root portal values. Wi-Fi credentials and
+network scanning remain exclusively on the authenticated Pi-local portal.
+
 ## Disable or rotate
 
 Disable a lost device without deleting it:

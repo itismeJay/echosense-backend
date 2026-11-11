@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -8,6 +9,7 @@ from app.models.user import User
 from app.schemas.system_settings import SystemSettingsOut
 from app.routers.auth import require_super_admin
 from app.models.edge_device import EdgeDevice
+from app.schemas.edge_device import DeviceHeartbeat
 from app.services.device_auth import edge_device_or_transition
 from app.services.audit import (
     AuditAction,
@@ -22,6 +24,17 @@ router = APIRouter(prefix="/system-settings", tags=["System Settings"])
 async def _get_row(db: AsyncSession) -> SystemSettings:
     result = await db.execute(select(SystemSettings))
     return result.scalar_one_or_none()
+
+
+async def _validated_heartbeat_body(
+    payload: dict | None = Body(default=None),
+) -> DeviceHeartbeat | None:
+    if payload is None:
+        return None
+    try:
+        return DeviceHeartbeat.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid device heartbeat payload") from exc
 
 
 @router.get("", response_model=SystemSettingsOut, include_in_schema=False)
@@ -40,6 +53,7 @@ async def get_settings(
 
 @router.post("/heartbeat")
 async def post_heartbeat(
+    body: DeviceHeartbeat | None = Depends(_validated_heartbeat_body),
     db: AsyncSession = Depends(get_db),
     device: EdgeDevice | None = Depends(edge_device_or_transition),
 ):
@@ -50,6 +64,13 @@ async def post_heartbeat(
     if row:
         row.device_status = "online"
         row.last_heartbeat = now.replace(tzinfo=None)  # TIMESTAMP col requires naive datetime
+    if device is not None and body is not None:
+        if "wifi_status" in body.model_fields_set:
+            device.wifi_status = body.wifi_status
+        if "ssid" in body.model_fields_set:
+            device.wifi_ssid = body.ssid
+        if "wifi_local_url" in body.model_fields_set:
+            device.wifi_local_url = body.wifi_local_url
     await db.commit()
     return {
         "status": "ok",

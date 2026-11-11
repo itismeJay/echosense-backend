@@ -70,6 +70,9 @@ class EdgeDevice(Base):
         onupdate=func.now(),
     )
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    wifi_status = Column(String(20), nullable=True)
+    wifi_ssid = Column(String(32), nullable=True)
+    wifi_local_url = Column(String(255), nullable=True)
     assigned_at = Column(DateTime(timezone=True), nullable=True)
     key_rotated_at = Column(DateTime(timezone=True), nullable=True)
 
