@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -19,4 +19,5 @@ class Report(Base):
     date_from = Column(Date, nullable=False)
     date_to = Column(Date, nullable=False)
     total_incidents = Column(Integer, nullable=False)
+    outcome_counts = Column(JSONB, nullable=True)
     generated_at = Column(DateTime, server_default=func.now())

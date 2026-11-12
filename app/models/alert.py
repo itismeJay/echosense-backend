@@ -130,6 +130,11 @@ class Alert(Base):
             name="ck_alerts_push_status",
         ),
         CheckConstraint(
+            "review_outcome IS NULL OR review_outcome IN "
+            "('confirmed_bullying', 'false_alert', 'joking_banter', 'misheard')",
+            name="ck_alerts_review_outcome",
+        ),
+        CheckConstraint(
             "push_attempt_count >= 0",
             name="ck_alerts_push_attempt_count",
         ),
@@ -219,6 +224,8 @@ class Alert(Base):
     duration = Column(Float, nullable=False)
     location = Column(String, default="Classroom")
     status = Column(String, default="active")
+    review_outcome = Column(String(30), nullable=True)
+    review_note = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Rich evidence from the edge device (all nullable for backward compat)

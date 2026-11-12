@@ -647,8 +647,19 @@ async def review_alert(
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     previous = alert.status
-    if previous != body.status:
+    previous_outcome = alert.review_outcome
+    previous_note = alert.review_note
+    # Back to "needs review" clears the conclusion; otherwise keep it unless a new one is sent.
+    if body.status == "active":
+        new_outcome, new_note = None, None
+    elif body.outcome is not None:
+        new_outcome, new_note = body.outcome, body.note
+    else:
+        new_outcome, new_note = previous_outcome, previous_note
+    if (previous, previous_outcome, previous_note) != (body.status, new_outcome, new_note):
         alert.status = body.status
+        alert.review_outcome = new_outcome
+        alert.review_note = new_note
         await record_audit_event(
             db,
             request,
@@ -659,7 +670,14 @@ async def review_alert(
             resource_id=alert.id,
             target=alert.classroom_name_snapshot or alert.location,
             description="User changed an alert's review status.",
-            metadata={"previous_status": previous, "new_status": body.status},
+            # The note itself stays out of the audit log; only whether one exists.
+            metadata={
+                "previous_status": previous,
+                "new_status": body.status,
+                "previous_outcome": previous_outcome,
+                "new_outcome": new_outcome,
+                "has_note": new_note is not None,
+            },
             school_id=alert.school_id,
         )
         await db.commit()

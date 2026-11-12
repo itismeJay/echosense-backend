@@ -576,6 +576,8 @@ class AlertResponse(BaseModel):
     duration: Optional[float] = None
     location: Optional[str] = None
     status: str
+    review_outcome: Optional[str] = None
+    review_note: Optional[str] = None
     created_at: datetime
     transcribed_text: Optional[str] = None
     detected_words: Optional[List[str]] = None
@@ -664,11 +666,41 @@ class AlertSummaryResponse(BaseModel):
 
 
 AlertReviewStatus = Literal["active", "reviewed", "resolved"]
+AlertReviewOutcome = Literal["confirmed_bullying", "false_alert", "joking_banter", "misheard"]
+ALERT_REVIEW_OUTCOMES: tuple[str, ...] = (
+    "confirmed_bullying",
+    "false_alert",
+    "joking_banter",
+    "misheard",
+)
 
 
 class AlertReviewRequest(BaseModel):
-    """Staff mark an alert reviewed or resolved, or set it back to needing review."""
+    """Staff mark an alert reviewed or resolved, or set it back to needing review.
+
+    An outcome and note may only accompany reviewed/resolved; going back to active clears both.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     status: AlertReviewStatus
+    outcome: Optional[AlertReviewOutcome] = None
+    note: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("note")
+    @classmethod
+    def _blank_note_is_none(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def _outcome_needs_review(self):
+        if self.status == "active" and (self.outcome is not None or self.note is not None):
+            raise ValueError(
+                "outcome and note are only allowed when status is reviewed or resolved"
+            )
+        if self.note is not None and self.outcome is None:
+            raise ValueError("a note needs an outcome")
+        return self

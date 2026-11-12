@@ -33,7 +33,7 @@ def _inspect(url):
 
 
 def test_wifi_management_upgrade_downgrade_upgrade(disposable_database, monkeypatch):
-    _upgrade_to(disposable_database, "head", monkeypatch)
+    _upgrade_to(disposable_database, "20261112_0020", monkeypatch)
     assert _revision(disposable_database) == "20261112_0020"
     tables, columns = _inspect(disposable_database)
     assert {"device_wifi_networks", "device_wifi_commands"} <= tables
@@ -45,5 +45,5 @@ def test_wifi_management_upgrade_downgrade_upgrade(disposable_database, monkeypa
     assert "wifi_signal" not in columns
     assert "wifi_ssid" in columns
 
-    _upgrade_to(disposable_database, "head", monkeypatch)
+    _upgrade_to(disposable_database, "20261112_0020", monkeypatch)
     assert _revision(disposable_database) == "20261112_0020"

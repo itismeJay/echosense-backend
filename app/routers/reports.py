@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.report import Report
 from app.models.alert import Alert
 from app.models.user import User
+from app.schemas.alert import ALERT_REVIEW_OUTCOMES
 from app.schemas.report import ReportCreate, ReportOut
 from app.routers.auth import require_admin_or_counselor
 from app.services.audit import (
@@ -60,6 +61,20 @@ async def generate_report(
         )
     )
     total = count_result.scalar() or 0
+    outcome_result = await db.execute(
+        scope_alert_query(
+            select(Alert.review_outcome, func.count(Alert.id)), current_user, school_id
+        )
+        .where(
+            cast(Alert.created_at, Date) >= body.date_from,
+            cast(Alert.created_at, Date) <= body.date_to,
+        )
+        .group_by(Alert.review_outcome)
+    )
+    outcome_counts = {outcome: 0 for outcome in ALERT_REVIEW_OUTCOMES}
+    outcome_counts["not_set"] = 0
+    for outcome, count in outcome_result.all():
+        outcome_counts[outcome if outcome in outcome_counts else "not_set"] += count
 
     report = Report(
         generated_by=current_user.id,
@@ -68,6 +83,7 @@ async def generate_report(
         date_from=body.date_from,
         date_to=body.date_to,
         total_incidents=total,
+        outcome_counts=outcome_counts,
     )
     db.add(report)
     await db.flush()
@@ -85,6 +101,7 @@ async def generate_report(
             "date_from": body.date_from,
             "date_to": body.date_to,
             "total_incidents": total,
+            "outcome_counts": outcome_counts,
         },
         school_id=report_school_id,
     )
