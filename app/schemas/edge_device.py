@@ -126,6 +126,7 @@ class EdgeDeviceResponse(BaseModel):
     last_seen_at: datetime | None
     wifi_status: WifiConnectionStatus | None = None
     wifi_ssid: str | None = None
+    wifi_signal: int | None = None
     wifi_local_url: str | None = None
     assigned_at: datetime | None
     key_rotated_at: datetime | None
@@ -169,6 +170,7 @@ class DeviceHeartbeat(BaseModel):
 
     ssid: str | None = None
     wifi_status: WifiConnectionStatus | None = None
+    wifi_signal: int | None = Field(default=None, ge=0, le=100)
     wifi_change_method: Literal["local_portal"] | None = None
     wifi_local_url: str | None = None
     wifi_remote_scan_supported: Literal[False] | None = None

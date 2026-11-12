@@ -69,6 +69,8 @@ async def post_heartbeat(
             device.wifi_status = body.wifi_status
         if "ssid" in body.model_fields_set:
             device.wifi_ssid = body.ssid
+        if "wifi_signal" in body.model_fields_set:
+            device.wifi_signal = body.wifi_signal
         if "wifi_local_url" in body.model_fields_set:
             device.wifi_local_url = body.wifi_local_url
     await db.commit()

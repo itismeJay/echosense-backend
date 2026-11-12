@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Create a private local-development environment without displaying secrets."""
 
+import base64
 import os
 import secrets
 from pathlib import Path
@@ -19,6 +20,10 @@ def main() -> None:
     replacements = {
         "replace-with-generated-local-postgres-password": secrets.token_urlsafe(24),
         "replace-with-generated-local-secret-key": secrets.token_urlsafe(48),
+        # A Fernet key: url-safe base64 of 32 random bytes.
+        "replace-with-generated-local-wifi-key": base64.urlsafe_b64encode(
+            secrets.token_bytes(32)
+        ).decode("ascii"),
         "replace-with-generated-local-admin-password": secrets.token_urlsafe(18),
         "replace-with-generated-local-staff-password": secrets.token_urlsafe(18),
         "replace-with-generated-local-counselor-password": secrets.token_urlsafe(18),

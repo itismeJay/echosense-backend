@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     DEVICE_CLAIM_MAX_FAILURES_PER_USER: int = 10
     DEVICE_CLAIM_MAX_FAILURES_PER_IP: int = 30
     DEVICE_CLAIM_FAILURE_WINDOW_SECONDS: int = 900
+    # Fernet key that encrypts dashboard-managed Wi-Fi passwords at rest. Without it,
+    # saving a Wi-Fi password answers 503 (open networks still work).
+    ECHOSENSE_WIFI_SECRET_KEY: str | None = None
     SQL_ECHO: bool = False
     TESTING: bool = False
 

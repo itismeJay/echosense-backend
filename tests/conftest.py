@@ -58,6 +58,8 @@ if _database_identity(TEST_DATABASE_URL) == _database_identity(application_datab
     )
 
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Throwaway Fernet key so Wi-Fi password tests never depend on a developer key.
+os.environ["ECHOSENSE_WIFI_SECRET_KEY"] = "hwE6m3xS8N9rK1qV0cJp4tYb2Lz7Ud5Fa6Gi8Ho3Wk0="
 os.environ["SECRET_KEY"] = "local-test-secret-not-for-production"
 os.environ["RUN_LEGACY_STARTUP_MAINTENANCE"] = "false"
 os.environ["SQL_ECHO"] = "false"
