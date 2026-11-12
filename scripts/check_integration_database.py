@@ -5,6 +5,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from dotenv import load_dotenv
 from sqlalchemy import text
 
@@ -15,7 +17,10 @@ load_dotenv(REPOSITORY_ROOT / ".env.integration", override=True)
 from app.database import engine  # noqa: E402
 from scripts.integration_safety import validate_integration_environment  # noqa: E402
 
-EXPECTED_MIGRATION = "20261105_0018"
+# The repository's own Alembic head, read from the migration files (no database access).
+EXPECTED_MIGRATION = ScriptDirectory.from_config(
+    Config(str(REPOSITORY_ROOT / "alembic.ini"))
+).get_current_head()
 REQUIRED_TABLES = frozenset({"alerts", "edge_devices", "users"})
 REQUIRED_ALERT_COLUMNS = frozenset(
     {

@@ -36,7 +36,7 @@ def test_wifi_status_columns_upgrade_and_downgrade(disposable_database, monkeypa
         }
     engine.dispose()
 
-    assert _revision(disposable_database) == "20261113_0021"
+    assert _revision(disposable_database) == "20261113_0022"
     assert columns["wifi_status"]["nullable"] is True
     assert columns["wifi_ssid"]["type"].length == 32
     assert columns["wifi_local_url"]["type"].length == 255

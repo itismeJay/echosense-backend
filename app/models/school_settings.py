@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 from app.database import Base
 
-DEFAULT_PUSH_LEVELS = ["HIGH", "MEDIUM"]
+DEFAULT_PUSH_LEVELS = ["HIGH", "MEDIUM", "LOW"]
 # ISO weekdays: 1 = Monday ... 7 = Sunday.
 DEFAULT_SCHOOL_DAYS = [1, 2, 3, 4, 5]
 DEFAULT_SCHOOL_TIMEZONE = "Asia/Manila"
@@ -51,7 +51,7 @@ class SchoolSettings(Base):
         ARRAY(String(10)),
         nullable=False,
         default=lambda: list(DEFAULT_PUSH_LEVELS),
-        server_default=text("ARRAY['HIGH', 'MEDIUM']::varchar[]"),
+        server_default=text("ARRAY['HIGH', 'MEDIUM', 'LOW']::varchar[]"),
     )
     school_hours_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     school_days = Column(

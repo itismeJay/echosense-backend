@@ -112,4 +112,4 @@ def test_existing_devices_become_active_and_downgrade_handles_unclaimed_boxes(
     assert key_hashes["es-new1"].startswith("!")
 
     _upgrade_to(disposable_database, "head", monkeypatch)
-    assert _revision(disposable_database) == "20261113_0021"
+    assert _revision(disposable_database) == "20261113_0022"

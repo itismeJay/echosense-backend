@@ -67,7 +67,7 @@ async def test_school_admin_reads_defaults_for_own_school(client, org_identities
     assert response.status_code == 200
     body = response.json()
     assert body["school_id"] == str(org_identities["school_a_id"])
-    assert body["push_levels"] == ["HIGH", "MEDIUM"]
+    assert body["push_levels"] == ["HIGH", "MEDIUM", "LOW"]
     assert body["school_hours"] == DEFAULT_HOURS
     assert body["sensitivity"] == "normal"
 
@@ -82,7 +82,7 @@ async def test_new_school_is_created_with_a_settings_row(client, org_identities)
     async with AsyncSessionLocal() as session:
         row = await session.get(SchoolSettings, created.json()["id"])
     assert row is not None
-    assert row.push_levels == ["HIGH", "MEDIUM"]
+    assert row.push_levels == ["HIGH", "MEDIUM", "LOW"]
     assert row.sensitivity == "normal"
     assert row.school_hours_enabled is False
 
@@ -119,7 +119,7 @@ async def test_school_admin_edits_only_own_school_and_it_is_audited(client, org_
     assert event.school_id == org_identities["school_a_id"]
     assert event.actor_email == "admin_a@org.test"
     assert event.metadata_json["changed_fields"] == ["push_levels", "school_hours", "sensitivity"]
-    assert event.metadata_json["previous_values"]["push_levels"] == ["HIGH", "MEDIUM"]
+    assert event.metadata_json["previous_values"]["push_levels"] == ["HIGH", "MEDIUM", "LOW"]
     assert event.metadata_json["new_values"]["sensitivity"] == "strict"
 
 
