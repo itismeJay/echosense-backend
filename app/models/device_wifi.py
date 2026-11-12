@@ -16,7 +16,7 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 
-WIFI_COMMAND_ACTIONS = ("add", "update", "remove", "set_priority", "connect_now")
+WIFI_COMMAND_ACTIONS = ("add", "update", "remove", "set_priority", "connect_now", "scan")
 WIFI_COMMAND_STATUSES = ("pending", "applied", "failed")
 
 
@@ -61,7 +61,7 @@ class DeviceWifiCommand(Base):
     __tablename__ = "device_wifi_commands"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('add', 'update', 'remove', 'set_priority', 'connect_now')",
+            "action IN ('add', 'update', 'remove', 'set_priority', 'connect_now', 'scan')",
             name="ck_device_wifi_commands_action",
         ),
         CheckConstraint(

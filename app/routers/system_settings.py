@@ -73,6 +73,8 @@ async def post_heartbeat(
             device.wifi_signal = body.wifi_signal
         if "wifi_local_url" in body.model_fields_set:
             device.wifi_local_url = body.wifi_local_url
+        if body.wifi_remote_scan_supported is not None:
+            device.wifi_remote_scan_supported = body.wifi_remote_scan_supported
     await db.commit()
     return {
         "status": "ok",

@@ -10,9 +10,9 @@ from sqlalchemy import (
     Integer,
     String,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import false, func
 
 from app.database import Base
 
@@ -74,6 +74,12 @@ class EdgeDevice(Base):
     wifi_ssid = Column(String(32), nullable=True)
     wifi_signal = Column(Integer, nullable=True)  # 0-100, from heartbeats
     wifi_local_url = Column(String(255), nullable=True)
+    wifi_remote_scan_supported = Column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # Latest remote scan: [{ssid, signal, security, known}], never passwords.
+    wifi_last_scan = Column(JSONB, nullable=True)
+    wifi_last_scan_at = Column(DateTime(timezone=True), nullable=True)
     assigned_at = Column(DateTime(timezone=True), nullable=True)
     key_rotated_at = Column(DateTime(timezone=True), nullable=True)
 

@@ -4,9 +4,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-WifiCommandAction = Literal["add", "update", "remove", "set_priority", "connect_now"]
+WifiCommandAction = Literal["add", "update", "remove", "set_priority", "connect_now", "scan"]
 WifiCommandStatus = Literal["pending", "applied", "failed"]
 MAX_WIFI_PRIORITY = 999
+MAX_SCAN_NETWORKS = 50
+# Raw networks accepted per report before dedupe/truncation (bounds request size).
+MAX_SCAN_INPUT = 200
 
 
 def validate_ssid(value: str) -> str:
@@ -95,13 +98,53 @@ class WifiCurrentConnection(BaseModel):
     last_seen_at: datetime | None
 
 
+class WifiScanNetwork(BaseModel):
+    """One network seen by a device scan. Only these four fields are ever stored."""
+
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    ssid: str
+    signal: int = Field(ge=0, le=100)
+    security: str = Field(pattern=r"^[a-z0-9_-]{1,20}$")
+    known: bool = False
+
+    _ssid = field_validator("ssid")(validate_ssid)
+
+    @field_validator("security", mode="before")
+    @classmethod
+    def _security(cls, value):
+        return value.strip().casefold() if isinstance(value, str) else value
+
+
+class WifiScanOut(BaseModel):
+    scanned_at: datetime
+    networks: list[WifiScanNetwork]
+
+
 class DeviceWifiOut(BaseModel):
     device_id: UUID
     can_manage: bool
+    remote_scan_supported: bool
     current: WifiCurrentConnection
-    # Empty for read-only roles (counselor, teacher).
+    # Empty / null for read-only roles (counselor, teacher).
     networks: list[WifiNetworkOut]
     pending_commands: list[WifiCommandOut]
+    last_scan: WifiScanOut | None
+
+
+def normalize_scan(networks: list[WifiScanNetwork]) -> list[WifiScanNetwork]:
+    """Dedupe by SSID (keep the strongest; known if any copy is), strongest first, max 50."""
+
+    best: dict[str, WifiScanNetwork] = {}
+    for network in networks:
+        seen = best.get(network.ssid)
+        if seen is None or network.signal > seen.signal:
+            known = network.known or (seen is not None and seen.known)
+            best[network.ssid] = network.model_copy(update={"known": known})
+        elif network.known and not seen.known:
+            best[network.ssid] = seen.model_copy(update={"known": True})
+    ordered = sorted(best.values(), key=lambda n: (-n.signal, n.ssid))
+    return ordered[:MAX_SCAN_NETWORKS]
 
 
 class EdgeWifiCommand(BaseModel):
@@ -126,6 +169,16 @@ class EdgeWifiCommandResult(BaseModel):
     error: str | None = Field(default=None, max_length=500)
     # Sent (even null) = what the device is connected to now; null = disconnected.
     current_ssid: str | None = None
+    # "scan" commands only: what the device sees. Ignored for other actions.
+    networks: list[WifiScanNetwork] | None = Field(default=None, max_length=MAX_SCAN_INPUT)
+
+    @field_validator("networks", mode="before")
+    @classmethod
+    def _drop_hidden(cls, value):
+        # Hidden networks have no SSID; they cannot be chosen, so drop them.
+        if isinstance(value, list):
+            return [n for n in value if not (isinstance(n, dict) and n.get("ssid") in (None, ""))]
+        return value
 
     @field_validator("current_ssid")
     @classmethod

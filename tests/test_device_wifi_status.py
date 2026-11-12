@@ -79,10 +79,9 @@ async def test_teacher_status_response_does_not_expose_wifi_management_fields(
         {"wifi_local_url": "https://192.168.50.8/"},
         {"wifi_local_url": "http://203.0.113.10/"},
         {"wifi_local_url": "http://device.example.test/"},
-        {"wifi_remote_scan_supported": True},
     ],
 )
-async def test_heartbeat_rejects_secrets_remote_scan_and_nonlocal_portals(
+async def test_heartbeat_rejects_secrets_and_nonlocal_portals(
     client, edge_device_identity, unsafe_fields
 ):
     response = await client.post(

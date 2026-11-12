@@ -34,6 +34,9 @@ from app.schemas.device_wifi import (
     WifiNetworkCreate,
     WifiNetworkOut,
     WifiNetworkUpdate,
+    WifiScanNetwork,
+    WifiScanOut,
+    normalize_scan,
 )
 from app.services.audit import AuditAction, AuditResource, AuditStatus, record_audit_event
 from app.services.device_auth import authenticate_edge_device
@@ -133,6 +136,13 @@ async def _audit(
     )
 
 
+def _last_scan(device: EdgeDevice) -> WifiScanOut | None:
+    if device.wifi_last_scan_at is None:
+        return None
+    networks = [WifiScanNetwork.model_validate(n) for n in device.wifi_last_scan or []]
+    return WifiScanOut(scanned_at=device.wifi_last_scan_at, networks=networks)
+
+
 def _command_out(command: DeviceWifiCommand) -> WifiCommandOut:
     return WifiCommandOut(
         id=command.id,
@@ -194,9 +204,11 @@ async def read_device_wifi(
     return DeviceWifiOut(
         device_id=device.id,
         can_manage=can_manage,
+        remote_scan_supported=bool(device.wifi_remote_scan_supported),
         current=current,
         networks=networks,
         pending_commands=pending,
+        last_scan=_last_scan(device) if can_manage else None,
     )
 
 
@@ -362,6 +374,41 @@ async def connect_wifi_network(
     return _command_out(command)
 
 
+@router.post("/{device_id}/wifi/scan", response_model=WifiCommandOut, status_code=202)
+async def scan_wifi_networks(
+    request: Request,
+    device_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Ask the device to scan nearby networks; the result lands in GET .../wifi last_scan."""
+
+    device = await _get_device(device_id, db, current_user, for_update=True)
+    if not device.wifi_remote_scan_supported:
+        raise HTTPException(status_code=409, detail="Device does not support remote Wi-Fi scan")
+    pending = await db.scalar(
+        select(DeviceWifiCommand)
+        .where(DeviceWifiCommand.device_id == device.id)
+        .where(DeviceWifiCommand.action == "scan", DeviceWifiCommand.status == "pending")
+        .limit(1)
+    )
+    if pending is not None:  # one queued scan is enough
+        return _command_out(pending)
+    command = _queue(db, device, current_user, "scan", "")
+    await _audit(
+        db,
+        request,
+        current_user,
+        device,
+        AuditAction.SCAN_WIFI_NETWORKS,
+        "scan",
+        "",
+        "Administrator asked an edge device to scan for Wi-Fi networks.",
+    )
+    await db.commit()
+    return _command_out(command)
+
+
 def _secure_transport(request: Request) -> bool:
     """HTTPS (directly or via a proxy's X-Forwarded-Proto) or a loopback/private-LAN peer."""
 
@@ -440,7 +487,11 @@ async def report_wifi_command_result(
     command.error = body.error if body.status == "failed" else None
     command.applied_at = now
     command.password_encrypted = None  # delivered; the network row keeps its own copy
-    if command.action != "remove":
+    if command.action == "scan":
+        if body.status == "applied" and body.networks is not None:
+            device.wifi_last_scan = [n.model_dump() for n in normalize_scan(body.networks)]
+            device.wifi_last_scan_at = now
+    elif command.action != "remove":
         network = await _get_network(db, device.id, command.ssid)
         if network is not None:
             network.last_status = body.status
