@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.pool import NullPool
 
@@ -56,6 +57,13 @@ def disposable_database() -> Iterator[str]:
             )
             connection.exec_driver_sql(f'DROP DATABASE "{database_name}"')
         admin_engine.dispose()
+
+
+def _alembic_head() -> str:
+    """The single head revision of the migration scripts, read from Alembic."""
+    heads = ScriptDirectory.from_config(render_migrate._alembic_config()).get_heads()
+    assert len(heads) == 1, f"expected one Alembic head, found {heads}"
+    return heads[0]
 
 
 def _upgrade_to(database_url: str, revision: str, monkeypatch: pytest.MonkeyPatch) -> None:

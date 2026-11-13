@@ -6,7 +6,13 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.pool import NullPool
 
-from tests.test_render_migrate import _downgrade_to, _revision, _sync_url, _upgrade_to
+from tests.test_render_migrate import (
+    _alembic_head,
+    _downgrade_to,
+    _revision,
+    _sync_url,
+    _upgrade_to,
+)
 from tests.test_render_migrate import disposable_database as _render_disposable_database
 
 disposable_database = pytest.fixture(name="disposable_database")(
@@ -64,7 +70,7 @@ def test_low_added_only_to_schools_on_the_old_default(disposable_database, monke
     assert _levels(url, default_school) == ["HIGH", "MEDIUM"]
 
     _upgrade_to(url, "head", monkeypatch)
-    assert _revision(url) == "20261113_0022"
+    assert _revision(url) == _alembic_head()
     assert _levels(url, default_school) == ["HIGH", "MEDIUM", "LOW"]
     assert _levels(url, custom_school) == ["HIGH"]
     new_school = _school(url, "New School")

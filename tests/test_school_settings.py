@@ -125,10 +125,17 @@ async def test_school_admin_edits_only_own_school_and_it_is_audited(client, org_
 
 @pytest.mark.asyncio
 async def test_unchanged_update_writes_no_audit_event(client, org_identities):
+    headers = auth_headers(org_identities["admin_a"])
+    current = await client.get("/school-settings", headers=headers)
+    assert current.status_code == 200
+
     response = await client.patch(
         "/school-settings",
-        json={"push_levels": ["MEDIUM", "HIGH"], "sensitivity": "normal"},
-        headers=auth_headers(org_identities["admin_a"]),
+        json={
+            "push_levels": current.json()["push_levels"],
+            "sensitivity": current.json()["sensitivity"],
+        },
+        headers=headers,
     )
 
     assert response.status_code == 200
@@ -385,7 +392,11 @@ async def _set_school_settings(**values) -> None:
 
 
 @pytest.mark.asyncio
-async def test_default_push_levels_skip_low_but_store_it(client, prevent_external_notifications):
+async def test_push_levels_without_low_skip_low_but_store_it(
+    client, prevent_external_notifications
+):
+    await _set_school_settings(push_levels=["HIGH", "MEDIUM"])
+
     low = await client.post("/alerts/", json=_alert("low"))
     high = await client.post("/alerts/", json=_alert("high"))
 
@@ -396,6 +407,21 @@ async def test_default_push_levels_skip_low_but_store_it(client, prevent_externa
     assert stored_low.push_last_error == "severity_push_disabled"
     pushed_severities = [call.args[2] for call in prevent_external_notifications.await_args_list]
     assert pushed_severities == ["HIGH"]
+
+
+@pytest.mark.asyncio
+async def test_push_levels_with_low_push_low(client, prevent_external_notifications):
+    await _set_school_settings(push_levels=["HIGH", "MEDIUM", "LOW"])
+
+    low = await client.post("/alerts/", json=_alert("low"))
+    high = await client.post("/alerts/", json=_alert("high"))
+
+    assert low.status_code == 200 and high.status_code == 200
+    assert low.json()["push_status"] != "skipped"
+    stored_low = await _stored_alert(low.json()["id"])
+    assert stored_low.push_last_error != "severity_push_disabled"
+    pushed_severities = [call.args[2] for call in prevent_external_notifications.await_args_list]
+    assert pushed_severities == ["LOW", "HIGH"]
 
 
 @pytest.mark.asyncio

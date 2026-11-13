@@ -6,7 +6,13 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.pool import NullPool
 
-from tests.test_render_migrate import _downgrade_to, _revision, _sync_url, _upgrade_to
+from tests.test_render_migrate import (
+    _alembic_head,
+    _downgrade_to,
+    _revision,
+    _sync_url,
+    _upgrade_to,
+)
 from tests.test_render_migrate import disposable_database as _render_disposable_database
 
 disposable_database = pytest.fixture(name="disposable_database")(
@@ -35,7 +41,7 @@ def _columns(url: str) -> tuple[set[str], set[str], set[str]]:
 
 def test_review_outcome_upgrade_downgrade_upgrade(disposable_database, monkeypatch):
     _upgrade_to(disposable_database, "head", monkeypatch)
-    assert _revision(disposable_database) == "20261113_0022"
+    assert _revision(disposable_database) == _alembic_head()
     alerts, reports, checks = _columns(disposable_database)
     assert {"review_outcome", "review_note"} <= alerts
     assert "outcome_counts" in reports
@@ -48,4 +54,4 @@ def test_review_outcome_upgrade_downgrade_upgrade(disposable_database, monkeypat
     assert "ck_alerts_review_outcome" not in checks
 
     _upgrade_to(disposable_database, "head", monkeypatch)
-    assert _revision(disposable_database) == "20261113_0022"
+    assert _revision(disposable_database) == _alembic_head()

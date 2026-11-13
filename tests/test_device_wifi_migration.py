@@ -6,7 +6,13 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.pool import NullPool
 
-from tests.test_render_migrate import _downgrade_to, _revision, _sync_url, _upgrade_to
+from tests.test_render_migrate import (
+    _alembic_head,
+    _downgrade_to,
+    _revision,
+    _sync_url,
+    _upgrade_to,
+)
 from tests.test_render_migrate import disposable_database as _render_disposable_database
 
 disposable_database = pytest.fixture(name="disposable_database")(
@@ -36,7 +42,7 @@ def test_wifi_status_columns_upgrade_and_downgrade(disposable_database, monkeypa
         }
     engine.dispose()
 
-    assert _revision(disposable_database) == "20261113_0022"
+    assert _revision(disposable_database) == _alembic_head()
     assert columns["wifi_status"]["nullable"] is True
     assert columns["wifi_ssid"]["type"].length == 32
     assert columns["wifi_local_url"]["type"].length == 255
